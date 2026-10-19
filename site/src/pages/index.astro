@@ -1,0 +1,280 @@
+---
+import Base from "../layouts/Base.astro";
+import HeroSky from "../components/HeroSky.astro";
+import AmbiguityDiagram from "../components/AmbiguityDiagram.astro";
+import TriangulationDiagram from "../components/TriangulationDiagram.astro";
+import LiveStats from "../components/LiveStats.astro";
+import { links, SITE_NAME } from "../config";
+
+const description =
+  "UAP Finder is a citizen-science network of passive sky cameras that triangulates unidentified aerial objects from several viewpoints to measure their position, altitude, speed and acceleration.";
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: SITE_NAME,
+  description,
+  url: Astro.site?.href,
+};
+---
+<Base description={description} jsonLd={jsonLd}>
+  <section class="hero">
+    <HeroSky />
+    <div class="wrap hero-inner">
+      <p class="eyebrow">Citizen science · Open source</p>
+      <h1>Measure the sky from many places at once.</h1>
+      <p class="lead">
+        {SITE_NAME} is a network of passive, sky-facing cameras in volunteers' homes that triangulates unidentified
+        aerial objects from two or more viewpoints miles apart, turning sightings into measured 3D tracks with
+        altitude, speed, acceleration and error bars.
+      </p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="/host/">Host a node</a>
+        <a class="btn btn-secondary" href={links.map}>See the live map</a>
+      </div>
+      <p class="hero-note">
+        We make no claims about what anything is. We measure where it is and how it moves, and publish the
+        uncertainty with every number.
+      </p>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="why-title">
+    <div class="wrap split split--wide-left">
+      <div>
+        <p class="eyebrow">Why stereo</p>
+        <h2 id="why-title">One camera sees a direction. Two see a position.</h2>
+        <p>
+          A single video, however sharp, records where an object appears and how fast it crosses the frame, but not
+          how far away it is. A bird 50 metres away and an airliner 10 kilometres away can trace exactly the same
+          path across the image. Without distance there is no altitude, no true speed and no acceleration, only
+          impressions.
+        </p>
+        <p>
+          When two cameras several miles apart see the same object at the same instant, their sight lines cross at
+          the object. That crossing point is a position in three dimensions. Repeat it ten times a second and you
+          have a track, from which speed and acceleration follow, each with a stated uncertainty.
+        </p>
+      </div>
+      <AmbiguityDiagram />
+    </div>
+    <div class="wrap">
+      <div class="grid grid-3 why-cards">
+        <article class="card">
+          <h3>Altitude</h3>
+          <p>
+            Comes straight from the triangulated position. Over typical node spacings, the error model predicts
+            tens of metres of uncertainty for an object at 10 km, not the guesswork of a single viewpoint.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Speed</h3>
+          <p>
+            True speed is angular speed multiplied by distance. Stereo supplies the distance, so a fast-looking dot
+            can be told apart from a slow, close one.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Acceleration</h3>
+          <p>
+            Estimated from curves fitted to the 3D track, never from noisy point-to-point differences. A high-g flag
+            needs the lower end of the error range to exceed 10 g.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="network-title">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Why a network</p>
+        <h2 id="network-title">Many cheap, passive, distributed eyes</h2>
+        <p class="lead">
+          The sky is large and interesting events are brief and rare. Professional sensors are few and their data
+          is rarely public. A dense network of modest cameras, always watching and synchronised to GPS time, covers
+          more sky more of the time, and every node added creates new stereo pairs.
+        </p>
+      </div>
+      <div class="grid grid-4">
+        <article class="card">
+          <svg class="card-icon" viewBox="0 0 36 36" aria-hidden="true" focusable="false"><circle cx="18" cy="18" r="6" fill="none" stroke="currentColor" stroke-width="2"></circle><path d="M18 4v5M18 27v5M4 18h5M27 18h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>
+          <h3>Passive</h3>
+          <p>Cameras only receive light. There is no radar and no emission; each node sends small data packets and nothing else.</p>
+        </article>
+        <article class="card">
+          <svg class="card-icon" viewBox="0 0 36 36" aria-hidden="true" focusable="false"><circle cx="7" cy="27" r="3" fill="currentColor"></circle><circle cx="29" cy="27" r="3" fill="currentColor"></circle><circle cx="18" cy="9" r="3" fill="currentColor"></circle><path d="M7 27 18 9 29 27M7 27h22" fill="none" stroke="currentColor" stroke-width="1.6"></path></svg>
+          <h3>Distributed</h3>
+          <p>Any two nodes 5–40 miles apart form a stereo baseline. Three or more sight lines over-determine a fix and expose false matches.</p>
+        </article>
+        <article class="card">
+          <svg class="card-icon" viewBox="0 0 36 36" aria-hidden="true" focusable="false"><rect x="6" y="9" width="24" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="2"></rect><path d="M11 14h4M11 19h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>
+          <h3>Off-the-shelf</h3>
+          <p>A small AI computer, a camera module and a GPS receiver, all analysed on the device. See the <a href="/host/#cost">parts list and prices</a>.</p>
+        </article>
+        <article class="card">
+          <svg class="card-icon" viewBox="0 0 36 36" aria-hidden="true" focusable="false"><circle cx="18" cy="18" r="12" fill="none" stroke="currentColor" stroke-width="2"></circle><path d="M18 11v7l5 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>
+          <h3>Synchronised</h3>
+          <p>GPS pulse-per-second timing keeps clocks aligned, so "simultaneous" really means within milliseconds across the network.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="how-title">
+    <div class="wrap split">
+      <div>
+        <p class="eyebrow">How it works</p>
+        <h2 id="how-title">From pixels to a measured track</h2>
+        <ol class="steps">
+          <li>
+            <h3>Detect on the device</h3>
+            <p>
+              Each node analyses its own video and discards stars, clouds, birds, insects and aircraft that broadcast
+              their position (ADS-B).
+            </p>
+          </li>
+          <li>
+            <h3>Send only metadata</h3>
+            <p>For what remains, the node sends direction, time and position: about half a kilobyte, ten times a second.</p>
+          </li>
+          <li>
+            <h3>Match and triangulate</h3>
+            <p>
+              The server pairs sightings from nodes within 80 miles taken within 50 milliseconds of each other and
+              intersects their sight lines.
+            </p>
+          </li>
+          <li>
+            <h3>Track, then verify</h3>
+            <p>
+              Fixes become 3D tracks with speed and acceleration. Only when two or more nodes agree does the server
+              ask them for a short HD clip.
+            </p>
+          </li>
+        </ol>
+        <p><a class="arrow-link" href="/how-it-works/">The full pipeline, error model and limitations</a></p>
+      </div>
+      <TriangulationDiagram
+        id="home-tri"
+        caption="Angles exaggerated for clarity. Real pointing errors are a few hundredths of a degree."
+      />
+    </div>
+  </section>
+
+  <section class="section section--tight" aria-label="Live network">
+    <div class="wrap">
+      <LiveStats />
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="expect-title">
+    <div class="wrap split split--wide-left">
+      <div>
+        <p class="eyebrow">What to expect</p>
+        <h2 id="expect-title">Most detections will turn out to be ordinary</h2>
+        <p>
+          Aircraft without ADS-B, satellites, balloons, drones, meteors, birds and insects near the lens, reflections
+          and sensor artefacts: a sky camera sees all of them. Filtering removes many on the device; measurement
+          explains most of the rest. That is the point. A track with altitude, speed and trajectory lets anyone test an
+          explanation against data instead of arguing about a blurry video.
+        </p>
+        <p>
+          Whatever is left after that comes with numbers, error bars and the raw sight lines, so that others can check
+          the work.
+        </p>
+      </div>
+      <ul class="principles">
+        <li><strong>Measurement first.</strong> Position, altitude, speed and acceleration, each with its uncertainty.</li>
+        <li><strong>Transparency.</strong> The code, the geometry and the error model are <a href={links.repo}>open source</a>.</li>
+        <li><strong>Privacy by design.</strong> Video stays on the node unless a confirmed stereo match asks for a clip. Public node locations are rounded to about 1 km.</li>
+        <li><strong>Honest limits.</strong> We say what the system cannot do. <a href="/how-it-works/#limitations">Read the limitations</a>.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section cta" aria-labelledby="cta-title">
+    <div class="wrap cta-inner">
+      <h2 id="cta-title">Help build the network</h2>
+      <p class="lead">
+        Coverage grows one rooftop, yard or field at a time. Rural sites, where cameras are scarce, are especially
+        valuable.
+      </p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="/host/">Host a node</a>
+        <a class="btn btn-secondary" href="/get-involved/">Other ways to help</a>
+        <a class="btn btn-secondary" href={links.coverageMap}>Where nodes are needed</a>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding-block: clamp(72px, 12vw, 152px) clamp(96px, 14vw, 180px);
+    background:
+      radial-gradient(110% 90% at 80% 0%, rgb(92 184 255 / 0.1), transparent 60%),
+      linear-gradient(180deg, #050912 0%, #08101f 100%);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .hero-inner {
+    position: relative;
+    z-index: 1;
+  }
+
+  .hero h1 {
+    max-width: 15ch;
+  }
+
+  .hero .lead {
+    margin-bottom: 28px;
+  }
+
+  .hero-note {
+    margin-top: 22px;
+    color: var(--muted);
+    font-size: 0.95rem;
+    max-width: 52ch;
+  }
+
+  .why-cards {
+    margin-top: clamp(32px, 5vw, 56px);
+  }
+
+  .principles {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 12px;
+  }
+
+  .principles li {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--star);
+    border-radius: var(--radius-sm);
+    padding: 14px 18px;
+    color: var(--text-2);
+  }
+
+  .cta {
+    background:
+      radial-gradient(80% 120% at 50% 120%, rgb(92 184 255 / 0.14), transparent 70%),
+      var(--bg);
+  }
+
+  .cta-inner {
+    text-align: center;
+    display: grid;
+    justify-items: center;
+  }
+
+  .cta .btn-row {
+    justify-content: center;
+  }
+</style>

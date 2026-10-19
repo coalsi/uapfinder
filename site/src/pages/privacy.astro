@@ -1,0 +1,213 @@
+---
+import Base from "../layouts/Base.astro";
+import { CONTACT_EMAIL, links } from "../config";
+
+const description =
+  "Plain-language privacy notice for UAP Finder: what the interest form collects and why, approximate location only, storage and access, deletion, what nodes send, and public rounding of node positions.";
+
+const formFields = [
+  ["Email address", "Required", "To contact you about the project. A repeat submission with the same address updates your entry instead of creating a new one."],
+  ["Name", "Optional", "To address you by name."],
+  ["Country", "Required", "To plan coverage at the largest scale."],
+  ["State or region, city or town, postal code", "Optional", "To find areas that need nodes and possible stereo partners 5–40 miles apart."],
+  ["Approximate coordinates", "Optional", "Only if you press “Use my approximate location”. Rounded to two decimal places (about 1 km) in your browser before sending, and rounded again by the server before storing."],
+  ["Site type, hardware status, interests, notes", "Optional", "To understand what kind of help you can offer."],
+  ["Consent", "Required", "A record that you agreed to this notice."],
+  ["Hidden “website” field", "—", "A spam trap that people never see. Submissions that fill it in are discarded."],
+];
+---
+<Base title="Privacy" description={description}>
+  <header class="page-hero">
+    <div class="wrap">
+      <p class="eyebrow">Privacy</p>
+      <h1>Privacy notice</h1>
+      <p class="lead">What we collect, why, who can see it and how to have it deleted, in plain language.</p>
+      <div class="callout callout--warn draft">
+        <p>
+          <strong>Draft for review.</strong> This is a plain-language notice prepared ahead of launch. It will be
+          reviewed before the network launches and is not legal advice. Last updated October 2026.
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <div class="section">
+    <div class="wrap prose policy">
+      <section aria-labelledby="who">
+        <h2 id="who">Who is responsible</h2>
+        <p>
+          UAP Finder is an open-source project. Its maintainers operate the server and database described here.
+          {
+            CONTACT_EMAIL ? (
+              <>
+                You can reach them at <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
+              </>
+            ) : (
+              <>
+                You can reach them through the <a href={links.issues}>project repository</a>.
+              </>
+            )
+          }
+        </p>
+      </section>
+
+      <section aria-labelledby="form">
+        <h2 id="form">The interest form</h2>
+        <p>The form on <a href="/get-involved/#signup">Get involved</a> stores only what you type in or choose:</p>
+        <div class="table-wrap" tabindex="0" role="region" aria-labelledby="fields-caption">
+          <table>
+            <caption id="fields-caption">Interest-form fields and why we ask</caption>
+            <thead>
+              <tr><th scope="col">Field</th><th scope="col">Required?</th><th scope="col">Why</th></tr>
+            </thead>
+            <tbody>
+              {formFields.map(([f, r, w]) => <tr><th scope="row">{f}</th><td>{r}</td><td>{w}</td></tr>)}
+            </tbody>
+          </table>
+        </div>
+        <p>
+          We never ask for a street address, phone number or precise location. Please don't put them in the notes.
+          The record also holds the dates it was created and last updated.
+        </p>
+        <p>
+          When you submit, the server sees your IP address in order to limit submissions to a few per hour from each
+          connection; it is not part of your sign-up record. Like most websites, our hosting provider may keep
+          standard request logs, including IP addresses, for operation and security.
+        </p>
+      </section>
+
+      <section aria-labelledby="approx">
+        <h2 id="approx">Approximate location only</h2>
+        <p>
+          The "Use my approximate location" button asks your browser for your position only when you press it. The
+          result is rounded to two decimal places on your device straight away: about 1.1 km north–south and less
+          east–west away from the equator. The rounded value is sent only if you submit the form, and the server
+          rounds it to two decimals again before storing it.
+        </p>
+      </section>
+
+      <section aria-labelledby="storage">
+        <h2 id="storage">How it is stored and who can see it</h2>
+        <ul>
+          <li>Entries are stored in the project's server database.</li>
+          <li>
+            Only project administrators holding the server's administrator credentials can list or export them, to
+            coordinate where nodes are deployed and to contact volunteers.
+          </li>
+          <li>
+            Publicly, volunteers appear only as a total count and as counts per 1° × 1° area (roughly 100 km across),
+            and areas with fewer than 3 volunteers are left out so that individuals cannot be located.
+          </li>
+          <li>We do not sell your details or use them for advertising.</li>
+          <li>
+            We keep an entry until you ask us to delete it or the project no longer needs it. A specific retention
+            period will be set before launch.
+          </li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="rights">
+        <h2 id="rights">Updating or deleting your details</h2>
+        <p>
+          To update your entry, submit the form again with the same email address. To have it deleted,
+          {
+            CONTACT_EMAIL ? (
+              <>
+                email <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> from that address.
+              </>
+            ) : (
+              <>
+                open an issue in the <a href={links.issues}>project repository</a> asking a maintainer to contact you.
+                Please don't post your email address or other personal details in the public issue.
+              </>
+            )
+          }
+          {" "}We will verify the request and delete the entry. Depending on where you live, you may also have legal
+          rights to access, correct or delete your data, or to complain to a data-protection authority.
+        </p>
+      </section>
+
+      <section aria-labelledby="nodes">
+        <h2 id="nodes">If you host a node</h2>
+        <p>
+          A node analyses its video on the device. It sends the server small metadata packets about unidentified moving
+          objects (time, the node's GPS position, camera pointing and the direction to the object) and a heartbeat every
+          10 seconds with its health and camera geometry. Continuous video is never uploaded.
+        </p>
+        <ul>
+          <li>
+            <strong>Positions are rounded in public.</strong> The server uses your node's exact position for
+            triangulation. The public map and API round node positions to two decimal places, about 1 km.
+          </li>
+          <li>
+            <strong>Rounding is a safeguard, not a guarantee.</strong> Published sight lines combined with triangulated
+            positions could, in principle, narrow a node's location further. This is under review before launch.
+          </li>
+          <li>
+            <strong>Node labels are public.</strong> If you give your node a label, don't include your address or name.
+          </li>
+          <li>
+            <strong>Clips are public.</strong> After two or more nodes confirm a match, each may be asked for a
+            10-second clip of its full camera frame, which is then linked from the public track record. Aim the camera
+            so it sees only sky, and mask anything else.
+          </li>
+          <li>
+            <strong>Local clips stay local.</strong> By default the node keeps short clips of its own detections on its
+            own disk for up to 14 days and uploads them only on request.
+          </li>
+          <li>
+            <strong>Online ADS-B feeds.</strong> If you use an online aircraft feed rather than a local receiver, the
+            node shares its location with that provider to ask for nearby aircraft.
+          </li>
+        </ul>
+        <p>More detail: <a href="/how-it-works/#published">what is and isn't published</a>.</p>
+      </section>
+
+      <section aria-labelledby="site">
+        <h2 id="site">This website</h2>
+        <p>
+          This site sets no cookies and uses no analytics, advertising, third-party scripts or web fonts. The live
+          figures on the home page are fetched by your browser from the project's own API. The location button uses
+          your browser's built-in location service, only when you press it.
+        </p>
+      </section>
+
+      <section aria-labelledby="changes">
+        <h2 id="changes">Changes</h2>
+        <p>
+          We will update this page as the project develops, and the history of every change is visible in the
+          <a href={`${links.repo}/commits/main/site/src/pages/privacy.astro`}>project repository</a>.
+        </p>
+      </section>
+    </div>
+  </div>
+</Base>
+
+<style>
+  .draft {
+    margin-top: 24px;
+    max-width: 70ch;
+  }
+
+  .policy section + section {
+    margin-top: clamp(32px, 5vw, 48px);
+  }
+
+  .policy h2 {
+    font-size: clamp(1.3rem, 1.15rem + 0.6vw, 1.6rem);
+  }
+
+  .policy p,
+  .policy li {
+    color: var(--text-2);
+  }
+
+  .policy .table-wrap {
+    margin-top: 6px;
+  }
+
+  .policy td,
+  .policy tbody th {
+    font-size: 0.92rem;
+  }
+</style>

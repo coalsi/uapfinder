@@ -1,0 +1,87 @@
+---
+/**
+ * Decorative night sky behind the home hero: deterministic stars, a curved
+ * horizon and two faint sight lines converging on a point (the logo idea at
+ * full scale). Hidden from assistive technology.
+ */
+function rng(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 2 ** 32;
+  };
+}
+const rand = rng(20261019);
+const stars = Array.from({ length: 140 }, (_, i) => {
+  const x = rand() * 1440;
+  const y = rand() * 560;
+  const r = 0.4 + rand() ** 3 * 1.5;
+  const o = 0.25 + rand() * 0.6;
+  return { x: x.toFixed(1), y: y.toFixed(1), r: r.toFixed(2), o: o.toFixed(2), tw: i % 9 === 0 };
+});
+---
+<svg class="hero-sky" viewBox="0 0 1440 640" preserveAspectRatio="xMaxYMax slice" aria-hidden="true" focusable="false">
+  <defs>
+    <radialGradient id="hs-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffd27a" stop-opacity="0.5"></stop>
+      <stop offset="1" stop-color="#ffd27a" stop-opacity="0"></stop>
+    </radialGradient>
+    <linearGradient id="hs-horizon" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5cb8ff" stop-opacity="0"></stop>
+      <stop offset="1" stop-color="#5cb8ff" stop-opacity="0.16"></stop>
+    </linearGradient>
+    <linearGradient id="hs-ray" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#8fd0ff" stop-opacity="0.65"></stop>
+      <stop offset="1" stop-color="#8fd0ff" stop-opacity="0.15"></stop>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="380" width="1440" height="230" fill="url(#hs-horizon)"></rect>
+  {stars.map((s) => <circle class={s.tw ? "tw" : undefined} cx={s.x} cy={s.y} r={s.r} fill="#dbe6f7" opacity={s.o} />)}
+  <g class="hs-rays">
+    <path d="M1010 596 L1168 214 M1336 598 L1176 214" stroke="url(#hs-ray)" stroke-width="1.6" stroke-linecap="round" fill="none"></path>
+    <circle cx="1172" cy="208" r="34" fill="url(#hs-glow)"></circle>
+    <circle cx="1172" cy="208" r="3.6" fill="#ffd27a"></circle>
+    <circle cx="1172" cy="208" r="13" fill="none" stroke="#ffd27a" stroke-opacity="0.4"></circle>
+  </g>
+  <path d="M0 612 Q720 560 1440 612 L1440 640 L0 640 Z" fill="#060a13"></path>
+  <path d="M0 612 Q720 560 1440 612" fill="none" stroke="#22304d" stroke-width="1.5"></path>
+  <g class="hs-rays">
+    <circle cx="1010" cy="598" r="5" fill="#8fd0ff"></circle>
+    <circle cx="1336" cy="601" r="5" fill="#8fd0ff"></circle>
+  </g>
+</svg>
+
+<style>
+  .hero-sky {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  @media (max-width: 1100px) {
+    .hs-rays {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .tw {
+      animation: twinkle 5s ease-in-out infinite;
+    }
+    .tw:nth-of-type(3n) {
+      animation-delay: -2s;
+    }
+    .tw:nth-of-type(4n) {
+      animation-delay: -3.5s;
+    }
+  }
+
+  @keyframes twinkle {
+    50% {
+      opacity: 0.15;
+    }
+  }
+</style>

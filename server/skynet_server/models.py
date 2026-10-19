@@ -239,6 +239,8 @@ class Commit:
     events: List[Dict[str, Any]] = field(default_factory=list)
     clips: List[ClipRecord] = field(default_factory=list)
     commands: Dict[str, List[str]] = field(default_factory=dict)
+    # UDP return addresses to share with other instances: node -> ((host, port), seen_ns)
+    udp_addrs: Dict[str, Tuple[Tuple[str, int], int]] = field(default_factory=dict)
 
     def is_empty(self) -> bool:
-        return not (self.tracks or self.links or self.events or self.clips or self.commands)
+        return not (self.tracks or self.links or self.events or self.clips or self.commands or self.udp_addrs)

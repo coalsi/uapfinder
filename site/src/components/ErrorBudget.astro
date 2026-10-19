@@ -1,0 +1,97 @@
+---
+/**
+ * Error budget from docs/MATH.md ("Error budget"): two nodes due east-west,
+ * target at 10 km altitude midway between them, computed with
+ * position_covariance in common/skynet_common/triangulation.py.
+ * The bar shows the 0.05 degree column (the default angular noise) on a
+ * linear scale.
+ */
+const rows = [
+  { baseline: "8 km (5 mi)", range: "10.4 km", parallax: "45°", elevation: "68°", s001: "4 m", s005: 19, s1: "386 m" },
+  { baseline: "16 km (10 mi)", range: "12.5 km", parallax: "79°", elevation: "50°", s001: "4 m", s005: 18, s1: "351 m" },
+  { baseline: "32 km (20 mi)", range: "18.7 km", parallax: "118°", elevation: "31°", s001: "6 m", s005: 29, s1: "570 m" },
+  { baseline: "64 km (40 mi)", range: "33.4 km", parallax: "146°", elevation: "17°", s001: "15 m", s005: 77, s1: "1.5 km" },
+  { baseline: "128 km (80 mi)", range: "64.7 km", parallax: "162°", elevation: "8°", s001: "53 m", s005: 266, s1: "5.3 km" },
+];
+const max = Math.max(...rows.map((r) => r.s005));
+---
+<div class="table-wrap" tabindex="0" role="region" aria-labelledby="budget-caption">
+  <table class="budget">
+    <caption id="budget-caption">
+      Predicted 3D position error (1σ RMS) for two nodes due east–west and a target at 10 km altitude midway between
+      them, for three levels of pointing accuracy. From the project's error model (docs/MATH.md).
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Node spacing</th>
+        <th scope="col" class="num">Range</th>
+        <th scope="col" class="num">Parallax</th>
+        <th scope="col" class="num">Elevation</th>
+        <th scope="col" class="num">σ at 0.01°</th>
+        <th scope="col" class="bar-col">σ at 0.05° <span class="muted">(default)</span></th>
+        <th scope="col" class="num">σ at 1°</th>
+      </tr>
+    </thead>
+    <tbody>
+      {
+        rows.map((r) => (
+          <tr>
+            <th scope="row">{r.baseline}</th>
+            <td class="num">{r.range}</td>
+            <td class="num">{r.parallax}</td>
+            <td class="num">{r.elevation}</td>
+            <td class="num">{r.s001}</td>
+            <td class="bar-col">
+              <span class="bar-cell" title={`${r.s005} m at 0.05° pointing error`}>
+                <span class="bar-track" aria-hidden="true">
+                  <span class="bar" style={`--w:${((r.s005 / max) * 100).toFixed(1)}%`} />
+                </span>
+                <span class="bar-val">{r.s005} m</span>
+              </span>
+            </td>
+            <td class="num">{r.s1}</td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+</div>
+
+<style>
+  .budget {
+    min-width: 720px;
+  }
+
+  .bar-col {
+    width: 30%;
+    min-width: 200px;
+  }
+
+  .bar-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .bar-track {
+    flex: 1;
+    display: block;
+  }
+
+  .bar {
+    display: block;
+    height: 12px;
+    width: var(--w);
+    min-width: 4px;
+    background: var(--accent-strong);
+    border-radius: 0 4px 4px 0;
+  }
+
+  .bar-val {
+    flex: 0 0 3.6em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--text);
+  }
+</style>

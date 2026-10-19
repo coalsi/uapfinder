@@ -56,6 +56,7 @@ _HISTORY_SPAN_S = 31.0
 _BALLISTIC_SPAN_S = 10.0
 _FIT_INTERVAL_NS = 100_000_000
 _SAME_FRAME_NS = 20_000_000
+_REFINE_RATIO = 1.25
 _OUTLIER_SIGMA = 3.5
 
 Sample = Tuple[float, float, float, float, float]  # t_s, x, y, z, sigma_m
@@ -182,6 +183,7 @@ class TrackUpdate:
     created: bool
     new_nodes: List[str]
     emit_event: bool
+    recorded: bool = True  # False: a same-frame refinement too small to keep as a point
 
 
 class TrackManager:
@@ -256,26 +258,46 @@ class TrackManager:
         speed = 1.5 * track.speed_mps + 300.0 if track.speed_mps is not None else 8000.0
         return dist <= speed * dt + 3.0 * (sig + m.sigma_m) + 100.0
 
+    @staticmethod
+    def redundant(track: TrackState, m: Match) -> bool:
+        """Is ``m`` a same-frame refinement not worth a point of its own?
+
+        A frame seen by k nodes yields up to k-1 triangulations as its packets
+        arrive, each with one more ray. Keeping only those that improve on the
+        frame's best sigma by at least ``1 - 1/_REFINE_RATIO`` (20%) leaves
+        about log2(k) points per frame instead of k-1, without losing the most
+        precise solutions.
+        """
+        for t, _, _, _, sigma in reversed(track.recent):
+            if abs(t - m.t_ns) < _SAME_FRAME_NS and sigma <= _REFINE_RATIO * m.sigma_m:
+                return True
+            if t < m.t_ns - _SAME_FRAME_NS:
+                break
+        return False
+
     def update(self, track: TrackState, m: Match, created: bool, now_ns: int) -> TrackUpdate:
         node_ids = [r.node_id for r in m.rays]
         new_nodes = [n for n in node_ids if n not in track.node_ids]
         track.node_ids.extend(new_nodes)
-        track.point_count += 1
-        track.first_ns = min(track.first_ns, m.t_ns)
-        if m.t_ns >= track.last_ns or track.last_point is None:
-            track.last_ns = m.t_ns
-            track.last_point = track_point(m.t_ns, m.lat, m.lon, m.alt_m, m.sigma_m, m.error_margin_m, node_ids)
-        self._add_sample(track, m)
-
-        before = (track.classification, tuple(track.flags))
-        if created or abs(m.t_ns - track.last_fit_ns) >= _FIT_INTERVAL_NS:
-            track.last_fit_ns = m.t_ns
-            self._update_kinematics(track)
-        changed = (track.classification, tuple(track.flags)) != before
+        recorded = created or not self.redundant(track, m)
+        changed = False
+        if recorded:
+            track.point_count += 1
+            track.first_ns = min(track.first_ns, m.t_ns)
+            if m.t_ns >= track.last_ns or track.last_point is None:
+                track.last_ns = m.t_ns
+                track.last_point = track_point(m.t_ns, m.lat, m.lon, m.alt_m, m.sigma_m, m.error_margin_m,
+                                               node_ids)
+            self._add_sample(track, m)
+            before = (track.classification, tuple(track.flags))
+            if created or abs(m.t_ns - track.last_fit_ns) >= _FIT_INTERVAL_NS:
+                track.last_fit_ns = m.t_ns
+                self._update_kinematics(track)
+            changed = (track.classification, tuple(track.flags)) != before
         emit = created or changed or bool(new_nodes) or m.t_ns - track.last_event_ns >= self.cfg.event_interval_ns
         if emit:
             track.last_event_ns = m.t_ns
-        return TrackUpdate(track, created, new_nodes, emit)
+        return TrackUpdate(track, created, new_nodes, emit, recorded)
 
     def _add_sample(self, track: TrackState, m: Match) -> None:
         """Add the point to the fit windows.

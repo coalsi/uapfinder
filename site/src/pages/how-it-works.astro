@@ -1,0 +1,413 @@
+---
+import Base from "../layouts/Base.astro";
+import Pipeline from "../components/Pipeline.astro";
+import TriangulationDiagram from "../components/TriangulationDiagram.astro";
+import ErrorBudget from "../components/ErrorBudget.astro";
+import { links } from "../config";
+
+const description =
+  "How UAP Finder works: on-device detection and filtering, metadata-only uplink, 50 ms stereo matching across nodes up to 80 miles apart, triangulation with an explicit error model, 3D tracks, and clips requested only after a confirmed match.";
+
+const toc = [
+  ["overview", "Overview"],
+  ["on-device", "On the node"],
+  ["uplink", "Metadata uplink"],
+  ["matching", "Matching"],
+  ["triangulation", "Triangulation"],
+  ["accuracy", "Accuracy"],
+  ["tracks", "Tracks and flags"],
+  ["clips", "Clips"],
+  ["published", "What is published"],
+  ["limitations", "Limitations"],
+];
+
+const packet = `{
+  "type": "telemetry",
+  "node_id": "4f9a2c1e-7b3d-4e8a-9c6f-1a2b3c4d5e6f",
+  "gps_coordinates": {"latitude": 33.6292, "longitude": -112.3679, "altitude_m": 357.2},
+  "imu_orientation": {"pitch_deg": 45.0, "roll_deg": 0.0, "yaw_deg": 0.0},
+  "timestamp_ns": 1782345600000000000,
+  "vector_target": {"azimuth_deg": 142.521, "elevation_deg": 65.104},
+  "pixel_metrics": {"angular_velocity_deg_s": 12.4, "relative_intensity": 0.85},
+  "seq": 1042,
+  "track_id": "t-000173",
+  "anomaly_score": 0.91,
+  "sig": "<64 hex characters: HMAC-SHA256 with the node's key>"
+}`;
+---
+<Base title="How it works" description={description}>
+  <header class="page-hero">
+    <div class="wrap">
+      <p class="eyebrow">How it works</p>
+      <h1>From a moving dot to a measured 3D track</h1>
+      <p class="lead">
+        Video is analysed where it is recorded. Only small metadata packets travel to a shared server, which pairs
+        simultaneous sightings, intersects their sight lines and reports every position with its uncertainty.
+      </p>
+      <nav aria-label="On this page">
+        <ul class="toc">
+          {toc.map(([id, label]) => <li><a href={`#${id}`}>{label}</a></li>)}
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <section id="overview" class="section anchor-section" aria-labelledby="overview-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="overview-title">Overview</h2>
+        <p>
+          Each <strong>node</strong> is a small computer (an NVIDIA Jetson Orin Nano) in a volunteer's home with a
+          sky-facing camera, a GPS receiver for position and precise time, and optionally an orientation sensor. The
+          <strong>server</strong> is shared. The design keeps the heavy data, the video, on the node, and moves only
+          what triangulation needs.
+        </p>
+      </div>
+      <Pipeline />
+    </div>
+  </section>
+
+  <section id="on-device" class="section anchor-section" aria-labelledby="ondevice-title">
+    <div class="wrap prose">
+      <p class="eyebrow">Step 1</p>
+      <h2 id="ondevice-title">On the node: detect, track, filter</h2>
+      <p>
+        The camera streams video (by default 1920 × 1080 at 60 frames per second through a lens with a field of view
+        of about 90°) into a pre-allocated buffer in memory that holds the last 10 seconds. A detector compares each
+        frame with a slowly updated model of the background sky and picks out small moving points; a tracker links
+        them from frame to frame into local tracks. A <strong>sky mask</strong> ignores everything below a minimum
+        elevation (3° by default) and any pixels the host marks as rooftops, trees or neighbouring buildings.
+      </p>
+      <p>Before anything is reported, each confirmed track goes through false-positive filters:</p>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="On-device filters">
+        <table>
+          <thead>
+            <tr><th scope="col">Filter</th><th scope="col">What it looks for</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Stars and planets</th><td>Objects moving at or below the sidereal rate (0.0042° per second) and fixed lights.</td></tr>
+            <tr><th scope="row">Clouds</th><td>Large, diffuse, low-contrast structure that is slow or drifts with the wind field measured across the frame.</td></tr>
+            <tr><th scope="row">Birds and insects</th><td>Objects close to the lens: large apparent size plus rapid growth or shrinking, a periodic wingbeat flicker (2–25 Hz) or defocus.</td></tr>
+            <tr><th scope="row">Aircraft</th><td>Tracks that follow an aircraft broadcasting its position by ADS-B, projected to each frame time, from a local receiver or an online feed.</td></tr>
+            <tr><th scope="row">Satellites and meteors</th><td>Off by default: one camera cannot tell a straight-flying unknown from a satellite. Triangulated altitude settles it on the server.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Filtered tracks are not sent. Their label and the reason are logged on the node, so an operator can audit what
+        was suppressed and why. A track that has manoeuvred is never labelled as a satellite or meteor.
+      </p>
+      <p>
+        Each detection's pixel position is converted to a direction in the sky (azimuth from true north and elevation
+        above the horizon) using the lens calibration and the camera's pointing. Pointing accuracy dominates the
+        error budget, so fixed cameras are calibrated against the star field; an orientation sensor, if fitted, is
+        used to notice that a mount has moved, not to measure direction.
+      </p>
+    </div>
+  </section>
+
+  <section id="uplink" class="section anchor-section" aria-labelledby="uplink-title">
+    <div class="wrap prose">
+      <p class="eyebrow">Step 2</p>
+      <h2 id="uplink-title">Metadata-only uplink</h2>
+      <p>
+        For each surviving track the node sends a <strong>telemetry</strong> packet ten times a second for as long as
+        the object is visible, plus a <strong>heartbeat</strong> every 10 seconds with its health and camera geometry.
+        A packet holds the capture time in nanoseconds from a GPS-disciplined clock, the node's position, the camera's
+        pointing, the direction to the object and a few image measurements. It is signed with a key unique to the
+        node, so the server can reject forged, stale (more than 10 seconds old) or replayed messages.
+      </p>
+      <pre aria-label="Example telemetry packet"><code>{packet}</code></pre>
+      <p class="small muted">
+        Example from the <a href={links.protocolDoc}>wire protocol</a>. Serialised compactly and signed, a packet like
+        this is about 520 bytes. Packets travel over UDP to a self-hosted server or over HTTPS in batches.
+      </p>
+      <div class="callout">
+        <p>
+          The packet contains the node's exact GPS position because triangulation needs it. The server uses it
+          internally; public responses round node positions to two decimal places, about 1 km.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="matching" class="section anchor-section" aria-labelledby="matching-title">
+    <div class="wrap prose">
+      <p class="eyebrow">Step 3</p>
+      <h2 id="matching-title">Matching simultaneous sightings</h2>
+      <p>
+        The server keeps a spatial index of active nodes (heard from in the last 60 seconds). For every incoming
+        sighting it looks for sightings from <strong>other nodes within 80 miles</strong> whose timestamps fall
+        <strong>within 50 milliseconds</strong>. Fifty milliseconds matters: an object at Mach 6 covers about 100 m in
+        that time, so when the neighbour has samples of the same track on both sides, the server interpolates its
+        sight line to the exact moment of the packet.
+      </p>
+      <p>A candidate pair is accepted as the same object only if:</p>
+      <ul>
+        <li>the two sight lines converge in front of both cameras, not behind one of them;</li>
+        <li>the angle between them (the parallax) is at least 1°, so distance is meaningfully constrained;</li>
+        <li>both ranges (150 m to 400 km) and the altitude (−500 m to 150 km) are physically plausible;</li>
+        <li>
+          the lines pass within a distance consistent with the expected angular noise: at most three times its
+          predicted spread plus 30 m for timing and GPS error.
+        </li>
+      </ul>
+      <p>Competing candidates are ranked by how small their miss distance is relative to that prediction.</p>
+    </div>
+  </section>
+
+  <section id="triangulation" class="section anchor-section" aria-labelledby="tri-title">
+    <div class="wrap">
+      <div class="split">
+        <div class="prose">
+          <p class="eyebrow">Step 4</p>
+          <h2 id="tri-title">Triangulation</h2>
+          <p>
+            Two sight lines in three dimensions almost never intersect exactly. The server finds the shortest segment
+            between them; its midpoint is the position estimate and its length, the <em>error margin</em>, is a
+            direct check on consistency.
+          </p>
+          <p>
+            With three or more nodes the server solves a weighted least-squares problem: the point that minimises the
+            squared perpendicular distances to all sight lines, with each line weighted by 1/(range × σ)², so that
+            distant observers, whose sideways error is larger, count for less. The result is converted to latitude,
+            longitude and height above the WGS84 ellipsoid.
+          </p>
+          <p class="small muted">
+            Derivations and tests: <a href={links.mathDoc}>docs/MATH.md</a> and the shared
+            <code>skynet_common.triangulation</code> module.
+          </p>
+        </div>
+        <TriangulationDiagram id="hiw-tri" caption="Angles exaggerated for clarity." />
+      </div>
+    </div>
+  </section>
+
+  <section id="accuracy" class="section anchor-section" aria-labelledby="acc-title">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Step 5</p>
+        <h2 id="acc-title">The error model, and why calibration and spacing matter</h2>
+        <p>
+          Each sight line constrains the position in the two directions perpendicular to it, with a standard
+          deviation of range × σ, where σ is the angular error. Combining all lines gives a covariance for the
+          position; the API reports its square-root trace as <code>sigma_m</code>, the 3D RMS error in metres. A
+          Monte-Carlo test confirms that simulated errors match this prediction.
+        </p>
+      </div>
+      <ErrorBudget />
+      <div class="grid grid-3 takeaways">
+        <article class="card">
+          <h3>Pointing calibration matters most</h3>
+          <p>
+            A 1080p sensor behind a 90° lens covers about 0.047° per pixel, and finding a point's centre gives
+            0.01–0.05°. A consumer orientation sensor manages about 1°, which is 20 to 100 times worse. That is why
+            fixed cameras are calibrated against the stars.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Spacing of 5–40 miles is the sweet spot</h3>
+          <p>
+            Too close and the sight lines are nearly parallel for distant objects. Too far and the object sits low on
+            both horizons, where refraction, haze and obstructions dominate: at 80 miles it is only 8° up.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Timing has to be GPS-grade</h3>
+          <p>
+            Nodes discipline their clocks with the GPS pulse-per-second signal. Ordinary internet time over a home
+            connection is only good to a few milliseconds, and the capture delay of each camera is calibrated once.
+          </p>
+        </article>
+      </div>
+      <p class="small muted not-modelled">
+        Not modelled yet: atmospheric refraction (about 0.5° at the horizon, under 0.02° above 45° elevation), residual
+        lens distortion and the node's own GPS position error (about 2–5 m, negligible next to angular error at these
+        ranges).
+      </p>
+    </div>
+  </section>
+
+  <section id="tracks" class="section anchor-section" aria-labelledby="tracks-title">
+    <div class="wrap prose">
+      <p class="eyebrow">Step 6</p>
+      <h2 id="tracks-title">3D tracks, speed, acceleration and flags</h2>
+      <p>
+        Every node labels its own tracks, so successive triangulations that share a node's track are linked into a
+        single 3D track. Individual fixes are noisy (tens of metres at typical ranges), so velocity and acceleration
+        are never taken from point-to-point differences. Instead the server fits a straight line and a parabola to
+        the last second of points, and again to a once-per-second history of the last 30 seconds, and keeps each
+        parameter's standard error.
+      </p>
+      <p>
+        Flags use the <strong>2σ lower bound</strong> of the fitted value, so measurement noise alone cannot trigger
+        them. The published maximum acceleration is that lower bound.
+      </p>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Track classifications">
+        <table>
+          <thead>
+            <tr><th scope="col">Flag</th><th scope="col">Rule</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row"><code>hypersonic</code></th><td>Speed above 1,715 m/s (Mach 5 at sea level).</td></tr>
+            <tr><th scope="row"><code>high_g</code></th><td>Acceleration above 98 m/s² (10 g).</td></tr>
+            <tr><th scope="row"><code>ballistic</code></th><td>For at least 5 s, moving at 100 m/s or more with an acceleration that matches gravity (within the larger of 3σ and 2 m/s²) and is known to within 3 m/s².</td></tr>
+            <tr><th scope="row"><code>stationary</code></th><td>Speed below 2 m/s for 30 s.</td></tr>
+            <tr><th scope="row"><code>unknown</code></th><td>The default when no rule has fired.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout callout--star">
+        <p>
+          <strong>A flag describes motion; it does not identify anything.</strong> Meteors, for example, routinely
+          exceed the hypersonic threshold: they enter the atmosphere at roughly 11–72 km/s and burn up around 80–120 km
+          altitude, and that altitude is what identifies them.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="clips" class="section anchor-section" aria-labelledby="clips-title">
+    <div class="wrap prose">
+      <p class="eyebrow">Step 7</p>
+      <h2 id="clips-title">The clip back-signal</h2>
+      <p>
+        Only when <strong>two or more nodes confirm a match</strong> does the server send each contributing node a
+        signed <code>clip_request</code> for the 10 seconds around the event (5 seconds either side). Because the node
+        keeps the most recent seconds of video in memory, the moments before the request can still be saved.
+      </p>
+      <ol>
+        <li>The node verifies the request's signature and copies the frames out of memory to its local SSD.</li>
+        <li>
+          It encodes them to H.264 at low priority, on the processor rather than a hardware encoder (the Orin Nano does
+          not have one), so detection is never starved.
+        </li>
+        <li>
+          It uploads the file to a one-time upload address and records a per-frame timestamp file alongside it for
+          forensic and stereo re-analysis.
+        </li>
+        <li>The server links the clip to the track, where it is available from the public track record.</li>
+      </ol>
+      <p class="small muted">
+        The design target for delivering the request is under 20 ms on the UDP transport. By default nodes also keep
+        short clips of their own detections on their own disk, for up to 14 days, and upload nothing unless asked.
+      </p>
+    </div>
+  </section>
+
+  <section id="published" class="section anchor-section" aria-labelledby="pub-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="pub-title">What is and isn't published</h2>
+        <p>The map and the public API are read-only and open to anyone. This is what they contain.</p>
+      </div>
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>Published</h3>
+          <ul class="checklist checklist--yes">
+            <li>3D tracks: positions, altitude, speed, acceleration lower bound, flags and the uncertainty of each fix.</li>
+            <li>Each fix's sight lines (azimuth and elevation) and which nodes contributed.</li>
+            <li>Nodes: optional label, position rounded to about 1 km, camera pointing and field of view, online status and basic health.</li>
+            <li>Clips requested after a confirmed match, once uploaded, linked from the track.</li>
+            <li>Network statistics, the stereo coverage map, and volunteer counts per 1° × 1° cell with at least 3 volunteers.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Not published</h3>
+          <ul class="checklist checklist--no">
+            <li>Continuous video. It stays on the node.</li>
+            <li>Detections filtered out on the node (stars, clouds, birds, insects, ADS-B aircraft).</li>
+            <li>Exact node coordinates, which the server uses only for triangulation.</li>
+            <li>Volunteer names, email addresses, notes, postal codes and individual locations.</li>
+          </ul>
+        </div>
+      </div>
+      <p class="small muted pub-note">
+        Rounding is a safeguard, not a guarantee: published sight lines combined with triangulated positions could, in
+        principle, narrow a node's location further. This is under review before launch. See the
+        <a href="/privacy/">privacy notice</a>.
+      </p>
+    </div>
+  </section>
+
+  <section id="limitations" class="section anchor-section" aria-labelledby="lim-title">
+    <div class="wrap prose">
+      <p class="eyebrow">Read this</p>
+      <h2 id="lim-title">Honest limitations</h2>
+      <ul class="limits">
+        <li>
+          <strong>The network is new.</strong> The accuracy figures on this site are predictions of the error model,
+          checked in simulation. They have not yet been verified in the field against targets of known position.
+        </li>
+        <li>
+          <strong>Most detections will be ordinary.</strong> Not every aircraft broadcasts ADS-B, and ADS-B data can be
+          missing or delayed, so some aircraft will get through. So will balloons, drones, satellites, meteors and
+          insects.
+        </li>
+        <li>
+          <strong>Cameras only see what stands out against the sky.</strong> Unlit objects at night, small or distant
+          objects by day and anything behind cloud are invisible. Coverage depends on weather, daylight and where
+          hosts live.
+        </li>
+        <li>
+          <strong>Low elevations are hard.</strong> Near the horizon, refraction (about 0.5°, not yet modelled), haze
+          and obstructions degrade accuracy.
+        </li>
+        <li>
+          <strong>False matches are possible.</strong> In a busy sky, two nodes may see different objects whose sight
+          lines happen to cross. Gating and a third node reduce this but cannot rule it out; two-node fixes deserve
+          more caution than three-node ones.
+        </li>
+        <li>
+          <strong>Systematic errors are not in the error bars.</strong> A mount that shifts, a mis-set clock or an
+          uncalibrated capture delay biases every measurement from that node until it is fixed. The error model assumes
+          random errors.
+        </li>
+        <li>
+          <strong>Short tracks give weak kinematics.</strong> Acceleration in particular needs many points. Because
+          flags are conservative, a real but marginal event may go unflagged.
+        </li>
+        <li>
+          <strong>The software is pre-release.</strong> Version 0.1; some hardware paths, such as the orientation-sensor
+          driver, have not yet been tested on real devices.
+        </li>
+        <li>
+          <strong>No identification.</strong> The system measures where something was and how it moved. It does not
+          say what it was.
+        </li>
+      </ul>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .takeaways {
+    margin-top: 28px;
+  }
+
+  .not-modelled,
+  .pub-note {
+    margin-top: 20px;
+    max-width: 90ch;
+  }
+
+  .limits {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    gap: 12px;
+  }
+
+  .limits li {
+    margin: 0;
+    padding: 14px 18px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text-2);
+  }
+
+  pre code {
+    white-space: pre;
+  }
+</style>

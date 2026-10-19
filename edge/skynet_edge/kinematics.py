@@ -65,32 +65,37 @@ def fit_kinematics(samples: Sequence[TrackSample], min_samples: int = 6,
     w = np.ones_like(t)
     coef = np.zeros((3, 2))
     sigma = 0.0
-    for _ in range(3):
-        sw = np.sqrt(w)[:, None]
-        coef, *_ = np.linalg.lstsq(A * sw, xy * sw, rcond=None)
-        res = np.linalg.norm(xy - A @ coef, axis=1)
-        sigma = max(1.4826 * float(np.median(res)), 1e-7)
-        k = 1.5 * sigma
-        w = np.where(res <= k, 1.0, k / np.maximum(res, 1e-12))
+    try:
+        for _ in range(3):
+            # Weighted normal equations: a 3x3 solve, far cheaper than an SVD per iteration.
+            aw = A * w[:, None]
+            coef = np.linalg.solve(aw.T @ A, aw.T @ xy)
+            res = np.sqrt(np.sum((xy - A @ coef) ** 2, axis=1))
+            sigma = max(1.4826 * float(np.median(res)), 1e-7)
+            k = 1.5 * sigma
+            w = np.where(res <= k, 1.0, k / np.maximum(res, 1e-12))
+        normal = (A * w[:, None]).T @ A
+        cov_unit = np.linalg.inv(normal)
+    except np.linalg.LinAlgError:  # degenerate timing (duplicate timestamps)
+        return None
     dof = max(1, len(t) - 3)
-    resid = np.linalg.norm(xy - A @ coef, axis=1)
-    var = float(np.sum(w * resid ** 2) / dof) / 2.0  # per-axis variance
-    cov = np.linalg.pinv((A * w[:, None]).T @ A) * var
-    accel_sigma = 2.0 * math.sqrt(max(cov[2, 2], 0.0))
+    resid2 = np.sum((xy - A @ coef) ** 2, axis=1)
+    var = float(np.sum(w * resid2) / dof) / 2.0  # per-axis variance
+    accel_sigma = 2.0 * math.sqrt(max(cov_unit[2, 2] * var, 0.0))
 
     vel = coef[1]
     acc = 2.0 * coef[2]
     speed = float(np.hypot(*vel))
     acc_mag = float(np.hypot(*acc))
     sig_acc = max(0.0, acc_mag - 3.0 * accel_sigma)
-    turn = normal = 0.0
+    turn = a_normal = 0.0
     if math.degrees(speed) >= min_speed_for_turn_deg_s:
         vhat = vel / speed
         a_n = abs(float(vhat[0] * acc[1] - vhat[1] * acc[0]))
-        normal = max(0.0, a_n - 3.0 * accel_sigma)
-        turn = normal / speed
+        a_normal = max(0.0, a_n - 3.0 * accel_sigma)
+        turn = a_normal / speed
     deg = math.degrees
-    return Kinematics(samples[-1].t_ns, len(samples), deg(speed), deg(sig_acc), deg(normal), deg(turn),
+    return Kinematics(samples[-1].t_ns, len(samples), deg(speed), deg(sig_acc), deg(a_normal), deg(turn),
                       deg(accel_sigma), deg(sigma))
 
 

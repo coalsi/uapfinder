@@ -1,0 +1,160 @@
+---
+/**
+ * The end-to-end data flow as responsive HTML (it reflows to a single column
+ * on phones, which an SVG flowchart cannot do legibly).
+ */
+const node = [
+  { title: "Capture", text: "1080p video at 60 fps into a rolling buffer in memory. Video never leaves the device by default." },
+  { title: "Detect and track", text: "Background subtraction finds moving points; a tracker links them frame to frame." },
+  { title: "Filter", text: "Stars, clouds, birds, insects and ADS-B aircraft are labelled and dropped." },
+  { title: "Report", text: "A signed, roughly 0.5 KB packet: time, position, direction. Ten per second while visible." },
+];
+const server = [
+  { title: "Match", text: "Packets from nodes within 80 miles and 50 ms of each other are paired." },
+  { title: "Triangulate", text: "Sight lines are intersected; every fix carries its own error estimate." },
+  { title: "Track and flag", text: "Fixes join into 3D tracks; speed and acceleration come from fitted curves." },
+  { title: "Request clips", text: "Only after two or more nodes agree, each is asked for ten seconds of HD video." },
+];
+---
+<div class="pipe" role="group" aria-label="Data flow from camera to published track">
+  <section class="lane" aria-labelledby="lane-node">
+    <h3 id="lane-node" class="lane-title"><span class="badge">On the node</span> In your home</h3>
+    <ol class="lane-steps">
+      {
+        node.map((s) => (
+          <li>
+            <h4>{s.title}</h4>
+            <p>{s.text}</p>
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+  <div class="uplink" aria-hidden="true">
+    <span>metadata only</span>
+  </div>
+  <section class="lane" aria-labelledby="lane-server">
+    <h3 id="lane-server" class="lane-title"><span class="badge">On the server</span> Shared</h3>
+    <ol class="lane-steps">
+      {
+        server.map((s) => (
+          <li>
+            <h4>{s.title}</h4>
+            <p>{s.text}</p>
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+  <p class="backsignal">
+    <span aria-hidden="true">&#8634;</span> The clip request is the only message the server sends to a node, and it
+    is signed with that node's key.
+  </p>
+</div>
+
+<style>
+  .pipe {
+    display: grid;
+    gap: 14px;
+  }
+
+  .lane {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px;
+  }
+
+  .lane-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    font-size: 1rem;
+    color: var(--text-2);
+    margin-bottom: 14px;
+    font-weight: 500;
+  }
+
+  .lane-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+    counter-reset: s;
+  }
+
+  @media (min-width: 760px) {
+    .lane-steps {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+
+  .lane-steps li {
+    margin: 0;
+    position: relative;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 14px 14px 14px;
+    counter-increment: s;
+  }
+
+  .lane-steps h4 {
+    font-size: 1rem;
+    margin: 0 0 6px;
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+
+  .lane-steps h4::before {
+    content: counter(s, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--star);
+    font-weight: 600;
+  }
+
+  .lane-steps p {
+    margin: 0;
+    color: var(--text-2);
+    font-size: 0.92rem;
+    line-height: 1.5;
+  }
+
+  .uplink {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .uplink::before,
+  .uplink::after {
+    content: "";
+    height: 28px;
+    width: 1px;
+    background: linear-gradient(var(--accent), transparent);
+  }
+
+  .backsignal {
+    margin: 0;
+    color: var(--text-2);
+    font-size: 0.92rem;
+    padding: 10px 14px;
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius-sm);
+  }
+
+  .backsignal span {
+    color: var(--star);
+    margin-right: 4px;
+  }
+</style>

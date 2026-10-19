@@ -1,0 +1,119 @@
+---
+import Logo from "./Logo.astro";
+import { CONTACT_EMAIL, links, SITE_NAME } from "../config";
+---
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div class="footer-about">
+      <a class="brand" href="/">
+        <Logo size={28} />
+        <span>{SITE_NAME}</span>
+      </a>
+      <p>
+        A citizen-science network of passive sky cameras that measures the position, altitude and speed of
+        unidentified aerial objects by triangulation. We publish measurements and their uncertainties, not
+        conclusions about what objects are.
+      </p>
+    </div>
+    <nav aria-label="Project">
+      <h2>Project</h2>
+      <ul>
+        <li><a href="/how-it-works/">How it works</a></li>
+        <li><a href="/host/">Host a node</a></li>
+        <li><a href="/get-involved/">Get involved</a></li>
+        <li><a href="/faq/">FAQ</a></li>
+        <li><a href={links.map}>Live map</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Open source">
+      <h2>Open source</h2>
+      <ul>
+        <li><a href={links.repo}>Source code</a></li>
+        <li><a href={links.mathDoc}>Geometry and error model</a></li>
+        <li><a href={links.protocolDoc}>Wire protocol</a></li>
+        <li><a href={links.apiDoc}>Server API</a></li>
+        <li><a href={links.issues}>Report an issue</a></li>
+      </ul>
+    </nav>
+    <div>
+      <h2>Privacy</h2>
+      <ul>
+        <li><a href="/privacy/">Privacy notice</a></li>
+        {
+          CONTACT_EMAIL && (
+            <li>
+              <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
+            </li>
+          )
+        }
+      </ul>
+      <p class="small muted">This website sets no cookies and loads no analytics or third-party scripts.</p>
+    </div>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    border-top: 1px solid var(--line);
+    background: var(--bg-elev);
+    padding-block: 48px 40px;
+    font-size: 0.95rem;
+    color: var(--text-2);
+  }
+
+  .footer-grid {
+    display: grid;
+    gap: 32px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  }
+
+  @media (min-width: 900px) {
+    .footer-grid {
+      grid-template-columns: 2fr 1fr 1fr 1.2fr;
+    }
+  }
+
+  .footer-about p {
+    max-width: 44ch;
+    margin-top: 12px;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 700;
+  }
+
+  h2 {
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 12px;
+  }
+
+  li + li {
+    margin-top: 6px;
+  }
+
+  a {
+    color: var(--text-2);
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+</style>

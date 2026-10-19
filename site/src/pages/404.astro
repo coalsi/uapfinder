@@ -1,0 +1,46 @@
+---
+import Base from "../layouts/Base.astro";
+import { links } from "../config";
+---
+<Base title="Page not found" description="The page you were looking for could not be found." noindex>
+  <section class="section nf">
+    <div class="wrap">
+      <p class="eyebrow">Error 404</p>
+      <h1>No fix on that page</h1>
+      <p class="lead">
+        We could not triangulate the address you asked for. It may have moved, or the link may be mistyped.
+      </p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="/">Go to the home page</a>
+        <a class="btn btn-secondary" href={links.map}>Open the live map</a>
+      </div>
+      <ul class="nf-links">
+        <li><a href="/how-it-works/">How it works</a></li>
+        <li><a href="/host/">Host a node</a></li>
+        <li><a href="/get-involved/">Get involved</a></li>
+        <li><a href="/faq/">FAQ</a></li>
+      </ul>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .nf {
+    min-height: 60vh;
+    display: grid;
+    align-items: center;
+  }
+
+  .nf-links {
+    list-style: none;
+    padding: 0;
+    margin: 32px 0 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 24px;
+  }
+
+  .nf-links li {
+    margin: 0;
+  }
+</style>

@@ -1,0 +1,162 @@
+---
+import Base from "../layouts/Base.astro";
+import { CONTACT_EMAIL, links, PRICES_AS_OF } from "../config";
+
+const description =
+  "Answers about UAP Finder: what it does and doesn't claim, legality and neighbours' privacy, what data leaves your home, accuracy, cost, power, bandwidth, clips and how to leave.";
+
+const contact = CONTACT_EMAIL
+  ? `email <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>`
+  : `open an issue in the <a href="${links.issues}">project repository</a> asking a maintainer to contact you (please don't post your email address or other personal details in the issue)`;
+
+interface Item {
+  id: string;
+  q: string;
+  a: string;
+}
+
+const items: Item[] = [
+  {
+    id: "aliens",
+    q: "Is this about aliens?",
+    a: `<p>No. UAP Finder makes no claims about what unidentified aerial phenomena are. It is a measuring instrument: it records where an object was, how high, how fast and how it accelerated, with an uncertainty attached to every number.</p>
+<p>We expect most detections to turn out to be ordinary: aircraft that don't broadcast their position, satellites, balloons, drones, meteors, birds and insects. Measuring them well is what makes it possible to tell the ordinary from anything that genuinely resists explanation, and to let others check that judgement.</p>`,
+  },
+  {
+    id: "legal",
+    q: "Is it legal? What about my neighbours' privacy?",
+    a: `<p>Rules differ by country, state and city, so check yours before installing. This is general information, not legal advice. UAP Finder is designed to be as unintrusive as a camera can be:</p>
+<ul>
+<li>It is <strong>passive</strong>: it only receives light, and it points at the sky.</li>
+<li>A <strong>sky mask</strong> excludes rooftops, trees and the horizon from detection, and by default anything below 3° elevation.</li>
+<li><strong>Video stays on the device.</strong> Only small metadata packets are sent, unless two or more nodes confirm a match and the server asks for a 10-second clip.</li>
+</ul>
+<p>Things worth checking:</p>
+<ul>
+<li><strong>Camera and data-protection law.</strong> In the EU and UK, a home camera that captures areas beyond your own property, such as a neighbour's garden or the street, can fall under data-protection law (the EU Court of Justice's <em>Ryneš</em> ruling, C-212/13, 2014). Pointing steeply upward and masking the horizon keeps the camera on the sky.</li>
+<li><strong>HOA, lease and planning rules</strong> for roof mounts, poles and exterior equipment.</li>
+<li><strong>Restricted sites.</strong> Some countries restrict photographing military installations; if you live near one, check first.</li>
+<li><strong>Radio reception.</strong> Rules on receiving and using radio broadcasts such as ADS-B vary by country.</li>
+</ul>
+<p>It also helps to tell your neighbours what the camera does and doesn't see.</p>`,
+  },
+  {
+    id: "data",
+    q: "What data leaves my house?",
+    a: `<ul>
+<li><strong>Telemetry</strong>, about 0.5 KB at a time and ten times a second while an unidentified object is in view: capture time, the node's GPS position, the camera's pointing, the direction to the object, its angular speed and brightness, a local track number and a signature.</li>
+<li><strong>Heartbeats</strong> every 10 seconds: position, camera geometry and health (frame rate, memory, temperature, clock offset, software version).</li>
+<li><strong>Clips</strong>, only when the server requests one after a confirmed stereo match.</li>
+</ul>
+<p>Continuous video, filtered detections and anything about your home network stay on the node, and there is no microphone. The server uses your node's exact position for triangulation; public views round it to about 1 km.</p>
+<p>One exception to note: if you use an <strong>online ADS-B feed</strong> instead of a local receiver, the node sends its approximate location to that provider to ask for nearby aircraft.</p>`,
+  },
+  {
+    id: "accuracy",
+    q: "How accurate is it?",
+    a: `<p>It depends mostly on how precisely each camera's pointing is known and on the geometry. With star-calibrated cameras (about 0.05° pointing error), the error model predicts a 3D position error of roughly <strong>20–30 m</strong> for an object at 10 km altitude seen by nodes 5–20 miles apart, about 80 m at 40 miles, and several hundred metres at 80 miles, where the object is low on both horizons. With uncalibrated pointing (about 1°) errors grow to hundreds of metres.</p>
+<p>Every published position carries its own estimate (<code>sigma_m</code>). These figures are model predictions checked in simulation and not yet verified in the field. Details are on <a href="/how-it-works/#accuracy">How it works</a>.</p>`,
+  },
+  {
+    id: "cost",
+    q: "How much does a node cost?",
+    a: `<p>Roughly <strong>$700–1,000</strong> in parts as of ${PRICES_AS_OF}, before tax and shipping. The largest item is the NVIDIA Jetson Orin Nano Super Developer Kit, at a list price of about $399 after NVIDIA's July 2026 price increase. See the <a href="/host/#cost">parts list</a>; prices have been volatile.</p>`,
+  },
+  {
+    id: "power",
+    q: "How much power and bandwidth does it use?",
+    a: `<p>We estimate <strong>15–30 W</strong> on average, about 130–260 kWh a year, or roughly $24–48 a year at the 2026 US average residential electricity price. Idle traffic is about 5 MB a day over UDP or about 50 MB a day over HTTPS, plus about 5 KB/s per tracked object and 5–25 MB per requested clip. These are estimates from the hardware's power modes and the protocol's message sizes, not field measurements; see <a href="/host/#power">power</a> and <a href="/host/#bandwidth">bandwidth</a>.</p>`,
+  },
+  {
+    id: "conditions",
+    q: "Does it work in daylight, at night and in cloud?",
+    a: `<p>Nodes run around the clock, but a camera can only detect what stands out against the sky. At night unlit objects are invisible; by day small or distant objects may not stand out; nothing is seen through cloud. Coverage therefore varies with weather and time of day, and the live map shows which nodes are online.</p>`,
+  },
+  {
+    id: "clips",
+    q: "What happens to the clips?",
+    a: `<p>A clip is requested only after two or more nodes independently see the same object at the same moment. Each contributing node uploads 10 seconds of video (5 seconds either side of the event) with a per-frame timestamp file. The clip is linked from the public track record, so anyone can review it alongside the measurements.</p>
+<p>A clip shows the camera's full frame, which is why hosts should aim their cameras so they see only sky. By default a node also keeps short clips of its own detections on its own disk for up to 14 days; those stay on your device unless requested. How long uploaded clips are kept on the server is a deployment setting that will be published before launch.</p>`,
+  },
+  {
+    id: "leave",
+    q: "How do I stop participating or delete my data?",
+    a: `<p><strong>To stop hosting</strong>, switch the node off or stop its software. It drops out of the active network within about a minute; it is no longer counted once it has been silent for 60 seconds.</p>
+<p><strong>To delete your interest-form entry, or ask about your node's records</strong>, ${contact}. We will verify the request and delete the entry. See the <a href="/privacy/">privacy notice</a>.</p>`,
+  },
+  {
+    id: "data-use",
+    q: "Can I use the data?",
+    a: `<p>Yes. The tracks, sight lines, coverage and clip records are served by a public, read-only <a href="${links.apiDoc}">API</a> and shown on the <a href="${links.map}">live map</a>. Check the <a href="${links.repo}">repository</a> for licence terms, and please report positions with their uncertainties.</p>`,
+  },
+];
+
+const stripTags = (html: string) => html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: items.map((i) => ({
+    "@type": "Question",
+    name: i.q,
+    acceptedAnswer: { "@type": "Answer", text: stripTags(i.a) },
+  })),
+};
+---
+<Base title="FAQ" description={description} jsonLd={jsonLd}>
+  <header class="page-hero">
+    <div class="wrap">
+      <p class="eyebrow">FAQ</p>
+      <h1>Frequently asked questions</h1>
+      <nav aria-label="Questions">
+        <ul class="toc">
+          {items.map((i) => <li><a href={`#${i.id}`}>{i.q}</a></li>)}
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="section">
+    <div class="wrap faq">
+      {
+        items.map((i) => (
+          <section id={i.id} class="faq-item anchor-section" aria-labelledby={`${i.id}-q`}>
+            <h2 id={`${i.id}-q`}>{i.q}</h2>
+            <div class="answer" set:html={i.a} />
+          </section>
+        ))
+      }
+    </div>
+  </div>
+</Base>
+
+<style>
+  .faq {
+    max-width: calc(var(--prose) + 2 * var(--gutter));
+    display: grid;
+    gap: 16px;
+  }
+
+  .faq-item {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: clamp(18px, 3vw, 28px);
+  }
+
+  .faq-item h2 {
+    font-size: clamp(1.2rem, 1.1rem + 0.5vw, 1.45rem);
+  }
+
+  .answer {
+    color: var(--text-2);
+  }
+
+  .answer :global(p:last-child),
+  .answer :global(ul:last-child) {
+    margin-bottom: 0;
+  }
+
+  .answer :global(strong) {
+    color: var(--text);
+  }
+</style>

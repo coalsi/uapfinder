@@ -7,14 +7,22 @@ from .base import Admission, AdmitResult, StateBackend
 
 
 def create_state(settings: Settings) -> StateBackend:
+    common = dict(
+        events_maxlen=settings.events_maxlen,
+        detection_retention_ns=settings.match.retention_ns,
+        max_points=settings.tracks.max_points,
+        track_retention_ns=settings.tracks.retention_ns,
+        replay_window_ns=settings.replay_window_ns,
+        node_active_ns=settings.node_active_ns,
+    )
     if settings.state_backend == "redis":
         from .redis import RedisState
 
         assert settings.redis_url
-        return RedisState(settings.redis_url, settings.redis_prefix, settings.events_maxlen)
+        return RedisState(settings.redis_url, settings.redis_prefix, **common)
     from .memory import MemoryState
 
-    return MemoryState(settings.events_maxlen)
+    return MemoryState(**common)
 
 
 __all__ = ["Admission", "AdmitResult", "StateBackend", "create_state"]

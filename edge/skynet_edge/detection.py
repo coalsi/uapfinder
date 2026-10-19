@@ -6,11 +6,16 @@ Pipeline per frame (Y plane only):
    of past frames (time constant ``background_tau_s``, default 2 s). That
    absorbs the daytime sky gradient, slowly drifting haze and the stars,
    which move only 0.0042 deg/s (one pixel every ~11 s at 0.047 deg/px).
-   Pixels inside current detections update 10x slower so a target does not
-   burn into the background and cancel itself.
+   The caller passes the boxes of young or moving tracks to
+   ``update_background``; those pixels update 10x slower so a slow target
+   does not burn into the background and cancel itself. Stationary
+   detections are deliberately *not* protected: after a background reset
+   the old frame's objects leave "ghosts" that must fade at the normal rate.
 2. Robust noise: per-tile sigma from the median of |diff| (for Gaussian
    noise median|x| = 0.6745 sigma), so the threshold adapts to a bright
-   horizon, the sun's glare or a dark zenith.
+   horizon, the sun's glare or a dark zenith. Successive estimates are
+   smoothed and may not fall by more than half at once, so one unlucky
+   sample cannot collapse the threshold and flood the frame.
 3. Detection at reduced resolution without losing point targets: |diff| is
    *max-pooled* (not area-averaged) by ``decimation``, so a 1-2 px target
    keeps its full contrast while the labelling work drops 4x.
@@ -121,6 +126,7 @@ class Detector(ABC):
         self.initialized = False
         self._frames_since_noise = cfg.noise_update_every  # estimate on the first difference frame
         self._sigma_tiles = np.ones((cfg.noise_tiles_y, cfg.noise_tiles_x), dtype=np.float32)
+        self._noise_estimated = False
         self._dyn_range = 255.0
         self._mask_dec: Optional[np.ndarray] = None  # uint8 0/255 at decimated resolution
         self._kernel = (cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (cfg.close_kernel_px, cfg.close_kernel_px))
@@ -151,7 +157,8 @@ class Detector(ABC):
     def _bg_roi(self, y0: int, y1: int, x0: int, x1: int) -> np.ndarray: ...
 
     @abstractmethod
-    def _update_background(self, y: np.ndarray, rois: Sequence[Tuple[int, int, int, int]]) -> None: ...
+    def _update_background(self, y: np.ndarray, rois: Sequence[Tuple[int, int, int, int]]) -> None:
+        """Blend ``y`` into the background; ``rois`` are (y0, y1, x0, x1) boxes updated slowly."""
 
     # --- shared logic -------------------------------------------------------
 
@@ -193,25 +200,36 @@ class Detector(ABC):
             log.debug("frame disturbed (%.1f%% foreground); background reset", 100 * fg_fraction)
             self._reset_background(y)
             self._frames_since_noise = cfg.noise_update_every  # re-estimate noise on the next frame
+            self._noise_estimated = False
             return DetectionResult(sigma=self.sigma, fg_fraction=fg_fraction, disturbed=True)
         if self._kernel is not None:
             low = cv2.morphologyEx(low, cv2.MORPH_CLOSE, self._kernel)
             if self._mask_dec is not None:
                 low = cv2.bitwise_and(low, self._mask_dec)
         blobs = self._measure(y, diff, low, seeds)
-
-        if self.frame_index % cfg.background_update_every == 0:
-            self._update_background(y, [self._expand(b.bbox, 2) for b in blobs])
         return DetectionResult(blobs, self.sigma, fg_fraction, False)
+
+    def update_background(self, y: np.ndarray, protect: Sequence[Tuple[int, int, int, int]] = ()) -> None:
+        """Blend the frame just passed to ``detect`` into the background.
+
+        ``protect`` holds (x, y, w, h) boxes, normally the blobs of young or
+        moving tracks, which are updated ``foreground_alpha_scale`` times
+        slower. Runs every ``background_update_every`` frames.
+        """
+        if self.initialized and self.frame_index % self.cfg.background_update_every == 0:
+            self._update_background(y, [self._expand(b, 2) for b in protect])
 
     def _update_noise(self, sample: np.ndarray, y: np.ndarray) -> None:
         ty, tx = self._sigma_tiles.shape
         hs, ws = (sample.shape[0] // ty) * ty, (sample.shape[1] // tx) * tx
         tiles = sample[:hs, :ws].reshape(ty, hs // ty, tx, ws // tx).transpose(0, 2, 1, 3).reshape(ty, tx, -1)
-        sigma = interpolated_median_abs(tiles) * _MAD_TO_SIGMA
         # A floor keeps thresholds meaningful on saturated or perfectly flat
         # regions (min_threshold_dn applies on top of k * sigma).
-        self._sigma_tiles = np.maximum(sigma, 0.3).astype(np.float32)
+        sigma = np.maximum(interpolated_median_abs(tiles) * _MAD_TO_SIGMA, 0.3).astype(np.float32)
+        if self._noise_estimated:
+            sigma = np.maximum(0.7 * self._sigma_tiles + 0.3 * sigma, 0.5 * self._sigma_tiles)
+        self._sigma_tiles = sigma.astype(np.float32)
+        self._noise_estimated = True
         lo, hi = np.percentile(y[::8, ::8], (0.1, 99.9))
         self._dyn_range = max(float(hi - lo), 1.0)
         low = self._threshold_map(self.cfg.low_threshold_sigma)
@@ -237,8 +255,10 @@ class Detector(ABC):
         return y0, y1, x0, x1
 
     def _measure(self, y: np.ndarray, diff: Any, low: np.ndarray, seeds: np.ndarray) -> List[Blob]:
+        if not seeds.any():  # the usual case for an empty sky: skip the labelling
+            return []
         n, labels, stats, _ = cv2.connectedComponentsWithStats(low, connectivity=8)
-        if n <= 1 or not seeds.any():
+        if n <= 1:
             return []
         seed_labels = labels[seeds]
         seed_labels = seed_labels[seed_labels > 0]
@@ -359,7 +379,9 @@ class ArrayDetector(Detector):
         self._y_dev = None
 
     def _host(self, arr: Any) -> np.ndarray:
-        return arr.get() if hasattr(arr, "get") else np.asarray(arr)
+        if hasattr(arr, "get"):
+            return self.xp.ascontiguousarray(arr).get()
+        return np.asarray(arr)
 
     def _upload(self, y: np.ndarray) -> Any:
         self._y_dev = self.xp.asarray(y)

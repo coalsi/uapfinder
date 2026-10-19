@@ -26,6 +26,7 @@ import hashlib
 import json
 import logging
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -109,6 +110,12 @@ def ffmpeg_command(cfg: ClipsConfig, src: Path, dst: Path) -> List[str]:
     return cmd
 
 
+def safe_name(text: str) -> str:
+    """A directory name derived from a (server-supplied) id that cannot escape the clip store."""
+    name = re.sub(r"[^A-Za-z0-9_.-]", "_", text)[:128].lstrip(".")
+    return name or "clip"
+
+
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -168,7 +175,7 @@ class ClipManager:
 
     def extend_event(self, event_id: str, t_end_ns: int) -> None:
         with self._lock:
-            job = self._jobs.get(event_id)
+            job = self._jobs.get(safe_name(event_id))
             if job is None:
                 return
             cap = job.protection.t0_ns + int((self.cfg.max_event_s + self.cfg.pre_s + self.cfg.post_s) * 1e9)
@@ -185,19 +192,24 @@ class ClipManager:
         uploader just queues the result).
         """
         slack = int(1e9)
+        stored: Optional[ClipResult] = None
         with self._lock:
             for res in self._stored.values():
                 if res.ok and res.mp4_path and res.first_ns is not None and res.last_ns is not None \
                         and res.first_ns <= t_start_ns + slack and res.last_ns >= t_end_ns - slack:
-                    log.info("clip request %s served from stored clip %s", request_id, res.clip_id)
-                    on_done(res)
-                    return
-            for job in self._jobs.values():
-                if job.kind == "event" and job.protection.t0_ns <= t_start_ns + slack:
-                    self.ring.extend(job.protection, t_end_ns)
-                    job.waiters.append(on_done)
-                    log.info("clip request %s attached to recording event %s", request_id, job.clip_id)
-                    return
+                    stored = res
+                    break
+            if stored is None:
+                for job in self._jobs.values():
+                    if job.kind == "event" and job.protection.t0_ns <= t_start_ns + slack:
+                        self.ring.extend(job.protection, t_end_ns)
+                        job.waiters.append(on_done)
+                        log.info("clip request %s attached to recording event %s", request_id, job.clip_id)
+                        return
+        if stored is not None:
+            log.info("clip request %s served from stored clip %s", request_id, stored.clip_id)
+            on_done(stored)
+            return
         oldest = self.ring.oldest_time_ns()
         if oldest is None or t_end_ns < oldest:
             on_done(ClipResult(request_id, "request", "", ok=False, error="requested window is no longer buffered"))
@@ -213,6 +225,7 @@ class ClipManager:
 
     def _start_job(self, clip_id: str, kind: str, t0: int, t1: int, metadata: Dict[str, Any],
                    on_done: Optional[ClipCallback] = None) -> None:
+        clip_id = safe_name(clip_id)
         directory = self.root / ("events" if kind == "event" else "requests") / clip_id
         directory.mkdir(parents=True, exist_ok=True)
         job = _Job(clip_id, kind, directory, self.ring.protect(t0, t1), dict(metadata))

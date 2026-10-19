@@ -1,0 +1,131 @@
+# SKY-NET edge node configuration (skynet-edge run --config this.yaml).
+# Unknown keys are rejected, so a typo fails at start-up instead of silently
+# using a default. Every key is optional unless marked "required".
+
+node:
+  node_id: node-a                     # as registered with POST /api/v1/nodes
+  key_file: /etc/skynet/node.key      # 64 hex chars (node_key from the server); or key_hex: "..."
+
+server:
+  transport: udp                      # udp | https | none
+  # Tailscale: the Mac Studio's MagicDNS name (or its 100.x.y.z address).
+  # Names are re-resolved every udp_resolve_interval_s.
+  udp_host: mac-studio
+  udp_port: 9999
+  # The server's HTTP API. Required for transport https; with udp it is used
+  # to repair clip upload URLs that point at the server's loopback address.
+  https_base_url: http://mac-studio:8000
+  report_hz: 10                       # telemetry samples per second per track
+  heartbeat_interval_s: 10
+  batch_interval_s: 0.1               # https: NDJSON batch period
+  command_poll_interval_s: 2          # https: poll for clip requests when idle
+  verify_tls: true
+
+camera:
+  source: gstreamer                   # gstreamer | v4l2 | file | synthetic
+  # Default pipeline for a CSI sensor (nvarguscamerasrc -> NV12 in NVMM ->
+  # nvvidconv -> I420 in system memory). 1920x1080@60 needs a sensor mode
+  # that supports it (e.g. IMX477); an IMX219 tops out at 1920x1080@30.
+  # gstreamer_pipeline: "nvarguscamerasrc sensor-id={sensor_id} ! video/x-raw(memory:NVMM),width={width},height={height},framerate={fps}/1,format=NV12 ! nvvidconv ! video/x-raw,format=I420 ! appsink drop=true max-buffers=2 sync=false"
+  gstreamer_backend: auto             # auto | opencv | subprocess (gst-launch-1.0, if OpenCV lacks GStreamer)
+  sensor_id: 0
+  # device: /dev/video0               # for source v4l2 (USB/UVC cameras)
+  width: 1920
+  height: 1080
+  fps: 60
+  # Sensor exposure midpoint -> frame read, measured once (README "Calibration").
+  capture_latency_ms: 0.0
+  # Calibrated intrinsics from a checkerboard (README). Without them the
+  # camera is modelled as an ideal pinhole with this field of view.
+  fov_h_deg: 90.0
+  # intrinsics:
+  #   fx: 960.5
+  #   fy: 960.1
+  #   cx: 959.2
+  #   cy: 541.7
+  #   dist: [-0.312, 0.105, 0.0002, -0.0001, -0.016]   # OpenCV k1 k2 p1 p2 k3
+
+attitude:
+  source: static                      # static (recommended) | bno055
+  # Optical axis: azimuth from TRUE north, elevation, roll (right side down).
+  # Solve these from a star field (README "Pointing calibration").
+  yaw_deg: 180.0
+  pitch_deg: 45.0
+  roll_deg: 0.0
+  bno055:
+    i2c_bus: 7                        # Orin Nano devkit header pins 3/5; check with i2cdetect -l
+    address: 0x28
+    magnetic_declination_deg: 10.3    # east positive; look up for your site (NOAA WMM)
+    yaw_offset_deg: 0.0               # camera relative to the IMU, first-order offsets
+    pitch_offset_deg: 0.0
+    roll_offset_deg: 0.0
+
+gps:
+  source: gpsd                        # gpsd | nmea | static
+  gpsd_host: 127.0.0.1
+  gpsd_port: 2947
+  # nmea_device: /dev/gps0            # for source nmea (setup.sh creates the symlink)
+  # nmea_baud: 9600
+  static:                             # surveyed position; also the fallback until the first fix
+    latitude: 33.6292
+    longitude: -112.3679
+    altitude_m: 357.2                 # metres above the WGS84 ELLIPSOID (not MSL)
+
+detection:
+  backend: auto                       # auto | cpu | cuda (CuPy)
+  decimation: 2                       # max-pool factor for labelling (1, 2 or 4)
+  background_tau_s: 2.0
+  threshold_sigma: 5.5
+  low_threshold_sigma: 3.5
+  sky_mask:
+    min_elevation_deg: 5.0
+    # polygon: [[0, 900], [1919, 900], [1919, 1079], [0, 1079]]   # pixel coordinates
+    # polygon_mode: exclude           # include = only inside is sky; exclude = mask the inside
+
+tracking:
+  confirm_hits: 5
+  confirm_window: 8
+  max_coast_s: 0.5
+
+filters:
+  slow:     {enabled: true, min_angular_speed_deg_s: 0.03}
+  cloud:    {enabled: true}
+  aircraft: {enabled: true, gate_deg: 1.0}
+  bird:     {enabled: true}
+  satellite: {enabled: false}         # off: one node cannot tell a straight-flying unknown from a satellite
+  meteor:    {enabled: false}
+
+anomaly:
+  report_unidentified: true           # report every unexplained confirmed track
+  min_anomaly_score: 0.3              # used only when report_unidentified is false
+  report_min_age_s: 1.0
+
+ring_buffer:
+  seconds: 10                         # 1080p60 I420: 187 MB per second
+  hold_seconds: 4                     # spare slots that keep protected frames while they are exported
+  memory_budget_mb: 3500
+
+clips:
+  pre_s: 5
+  post_s: 5
+  storage_dir: /var/lib/skynet/clips  # put this on NVMe: raw export runs at ~190 MB/s
+  retention_max_gb: 50
+  retention_max_age_days: 14
+
+adsb:
+  source: none                        # none | dump1090 | adsbx_v2
+  # Local receiver (readsb / dump1090-fa / tar1090):
+  # source: dump1090
+  # url: http://127.0.0.1/tar1090/data/aircraft.json
+  # ADSBx-v2-compatible HTTP API ({lat}, {lon}, {dist} are filled in):
+  # source: adsbx_v2
+  # url: https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{dist}
+  # api_key: "..."                    # sent in api_key_header (ADS-B Exchange: api-auth)
+  radius_nm: 40
+  poll_interval_s: 1.0
+
+health:
+  watchdog: true
+  stall_timeout_s: 10
+
+log_level: INFO

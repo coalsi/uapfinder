@@ -72,27 +72,47 @@ class NodeConfig:
 
 @dataclass
 class ServerConfig:
+    """Where telemetry goes.
+
+    ``udp_host`` may be a hostname (e.g. a Tailscale MagicDNS name such as
+    ``mac-studio``); it is re-resolved every ``udp_resolve_interval_s`` so a
+    server that changes address is followed without a restart.
+    ``https_base_url`` is the server's HTTP API (``http://mac-studio:8000``
+    on a tailnet, or a public ``https://`` URL). It is required for the
+    ``https`` transport and, with ``udp``, used to repair clip upload URLs
+    that point at the server's loopback address (a server without
+    ``SKYNET_PUBLIC_URL`` advertises ``http://127.0.0.1:8000/...``).
+    """
+
     transport: Literal["udp", "https", "none"] = "udp"
     udp_host: str = "127.0.0.1"
     udp_port: int = 9999
+    udp_resolve_interval_s: float = 60.0
     https_base_url: Optional[str] = None
+    rewrite_loopback_urls: bool = True
     report_hz: float = 10.0
     heartbeat_interval_s: float = 10.0
     batch_interval_s: float = 0.1
     command_poll_interval_s: float = 2.0
     request_timeout_s: float = 5.0
+    max_message_age_s: float = 8.0
     verify_tls: bool = True
 
     def validate(self, path: str) -> None:
+        _check(bool(self.udp_host), f"{path}.udp_host", "must not be empty")
         _check(0 < self.udp_port < 65536, f"{path}.udp_port", "must be a port number")
+        _check(self.udp_resolve_interval_s >= 1.0, f"{path}.udp_resolve_interval_s", "must be >= 1 s")
         _check(0.1 <= self.report_hz <= 120, f"{path}.report_hz", "must be in [0.1, 120]")
         _check(1.0 <= self.heartbeat_interval_s <= 50.0, f"{path}.heartbeat_interval_s",
                "must be in [1, 50] s (the server drops nodes silent for 60 s)")
         _check(0.01 <= self.batch_interval_s <= 5.0, f"{path}.batch_interval_s", "must be in [0.01, 5]")
+        _check(0 < self.max_message_age_s <= 10.0, f"{path}.max_message_age_s",
+               "must be in (0, 10] s (the server rejects older messages as stale)")
         if self.transport == "https":
             _check(bool(self.https_base_url), f"{path}.https_base_url", "required for transport https")
-            _check(str(self.https_base_url).startswith(("https://", "http://")), f"{path}.https_base_url",
-                   "must be an http(s) URL")
+        if self.https_base_url is not None:
+            _check(self.https_base_url.startswith(("https://", "http://")), f"{path}.https_base_url",
+                   "must be an http:// or https:// URL")
 
 
 @dataclass
@@ -112,14 +132,27 @@ class IntrinsicsConfig:
 
 @dataclass
 class CameraConfig:
+    """Frame source, geometry and timing.
+
+    ``gstreamer_backend``: ``opencv`` reads the pipeline through
+    ``cv2.VideoCapture(..., CAP_GSTREAMER)``; ``subprocess`` runs
+    ``gst-launch-1.0`` and reads raw I420 from its stdout, for OpenCV builds
+    without GStreamer support; ``auto`` picks ``opencv`` when
+    ``cv2.getBuildInformation()`` reports GStreamer, else ``subprocess``.
+    ``synthetic`` renders the built-in test sky (see ``synthetic.py``).
+    """
+
     source: Literal["gstreamer", "v4l2", "file", "synthetic"] = "gstreamer"
     gstreamer_pipeline: Optional[str] = None
+    gstreamer_backend: Literal["auto", "opencv", "subprocess"] = "auto"
+    gst_launch: str = "gst-launch-1.0"
     sensor_id: int = 0
     device: str = "/dev/video0"
     file_path: Optional[str] = None
     file_loop: bool = False
     file_start_ns: Optional[int] = None
     realtime: bool = True
+    synthetic_seed: int = 1
     width: int = 1920
     height: int = 1080
     fps: float = 60.0
@@ -133,6 +166,8 @@ class CameraConfig:
                path, "width and height must be positive and even (I420 storage)")
         _check(0 < self.fps <= 1000, f"{path}.fps", "must be in (0, 1000]")
         _check(0 < self.fov_h_deg < 180, f"{path}.fov_h_deg", "must be in (0, 180)")
+        if self.fov_v_deg is not None:
+            _check(0 < self.fov_v_deg < 180, f"{path}.fov_v_deg", "must be in (0, 180)")
         _check(self.capture_latency_ms >= 0, f"{path}.capture_latency_ms", "must be >= 0")
         if self.source == "file":
             _check(bool(self.file_path), f"{path}.file_path", "required for source file")
@@ -171,6 +206,7 @@ class AttitudeConfig:
     bno055: Bno055Config = field(default_factory=Bno055Config)
 
     def validate(self, path: str) -> None:
+        _check(-360 <= self.yaw_deg <= 360, f"{path}.yaw_deg", "must be in [-360, 360]")
         _check(-90 <= self.pitch_deg <= 90, f"{path}.pitch_deg", "must be in [-90, 90]")
         _check(-180 <= self.roll_deg <= 180, f"{path}.roll_deg", "must be in [-180, 180]")
 
@@ -191,7 +227,7 @@ class GpsConfig:
     source: Literal["gpsd", "nmea", "static"] = "gpsd"
     gpsd_host: str = "127.0.0.1"
     gpsd_port: int = 2947
-    nmea_device: str = "/dev/ttyTHS0"
+    nmea_device: str = "/dev/gps0"
     nmea_baud: int = 9600
     static: Optional[PositionConfig] = None
     max_fix_age_s: float = 10.0
@@ -229,6 +265,8 @@ class DetectionConfig:
     close_kernel_px: int = 3
     max_blobs: int = 64
     max_foreground_fraction: float = 0.05
+    protect_min_speed_px_s: float = 0.5
+    protect_young_s: float = 1.0
     sky_mask: SkyMaskConfig = field(default_factory=SkyMaskConfig)
 
     def validate(self, path: str) -> None:
@@ -255,18 +293,20 @@ class TrackingConfig:
     lk_window_px: int = 15
     lk_levels: int = 3
     dense_flow_every: int = 6
-    dense_flow_width: int = 240
+    dense_flow_width: int = 160
+    analysis_hz: float = 20.0
 
     def validate(self, path: str) -> None:
         _check(1 <= self.confirm_hits <= self.confirm_window, path, "need 1 <= confirm_hits <= confirm_window")
         _check(self.lk_window_px % 2 == 1 and self.lk_window_px >= 5, f"{path}.lk_window_px", "must be odd and >= 5")
+        _check(self.analysis_hz > 0, f"{path}.analysis_hz", "must be > 0")
 
 
 @dataclass
 class SlowFilterConfig:
     enabled: bool = True
     min_angular_speed_deg_s: float = 0.03
-    min_age_s: float = 1.5
+    min_age_s: float = 1.0
 
 
 @dataclass
@@ -274,7 +314,7 @@ class CloudFilterConfig:
     enabled: bool = True
     min_effective_area_px: float = 40.0
     max_peak_snr: float = 15.0
-    max_angular_speed_deg_s: float = 1.0
+    max_angular_speed_deg_s: float = 2.0
     flow_match_px_s: float = 6.0
     flow_match_fraction: float = 0.35
 
@@ -323,6 +363,7 @@ class MeteorFilterConfig:
 
 @dataclass
 class FiltersConfig:
+    hold_s: float = 3.0
     slow: SlowFilterConfig = field(default_factory=SlowFilterConfig)
     cloud: CloudFilterConfig = field(default_factory=CloudFilterConfig)
     aircraft: AircraftFilterConfig = field(default_factory=AircraftFilterConfig)
@@ -333,6 +374,19 @@ class FiltersConfig:
 
 @dataclass
 class AnomalyConfig:
+    """Kinematic scoring and the reporting policy.
+
+    With ``report_unidentified: true`` (default) every confirmed track that
+    survives the false-positive filters is reported, whatever its score:
+    one node's angular kinematics cannot tell a fast distant object from a
+    slow near one, so the server's triangulation decides. Set it to false to
+    report only tracks whose peak ``anomaly_score`` reaches
+    ``min_anomaly_score``. A track is first reported once it is
+    ``report_min_age_s`` old, so the filters have seen enough of it; the
+    samples of that first stretch (up to ``report_backfill_s``) are then sent
+    at ``report_hz`` so the server still gets the start of the track.
+    """
+
     window_s: float = 0.5
     min_samples: int = 6
     turn_rate_floor_deg_s: float = 20.0
@@ -342,11 +396,17 @@ class AnomalyConfig:
     min_speed_for_turn_deg_s: float = 0.2
     maneuver_turn_rate_deg_s: float = 90.0
     report_unidentified: bool = True
-    min_anomaly_score: float = 0.0
+    min_anomaly_score: float = 0.3
+    report_min_age_s: float = 1.0
+    report_backfill_s: float = 2.0
 
     def validate(self, path: str) -> None:
         _check(0 <= self.min_anomaly_score <= 1, f"{path}.min_anomaly_score", "must be in [0, 1]")
         _check(self.min_samples >= 3, f"{path}.min_samples", "must be >= 3 for a quadratic fit")
+        _check(self.window_s > 0, f"{path}.window_s", "must be > 0")
+        _check(self.report_min_age_s >= 0 and self.report_backfill_s >= 0, path,
+               "report_min_age_s and report_backfill_s must be >= 0")
+        _check(self.turn_rate_scale_deg_s > 0 and self.accel_scale_deg_s2 > 0, path, "score scales must be > 0")
 
 
 @dataclass
@@ -405,9 +465,20 @@ class AdsbConfig:
 
 @dataclass
 class HealthConfig:
+    """systemd watchdog and status reporting.
+
+    The watchdog is only pinged while frames are being processed: a camera
+    that stops delivering for ``stall_timeout_s`` stops the pings and
+    systemd restarts the service after ``WatchdogSec``.
+    """
+
     watchdog: bool = True
     stall_timeout_s: float = 10.0
     chrony_offset: bool = True
+    status_log_interval_s: float = 60.0
+
+    def validate(self, path: str) -> None:
+        _check(self.stall_timeout_s > 0, f"{path}.stall_timeout_s", "must be > 0")
 
 
 @dataclass

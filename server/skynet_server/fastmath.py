@@ -6,7 +6,7 @@ overhead dominates: ``triangulate_many`` costs ~170 us (mostly
 ``np.linalg.cond``'s SVD) and ``position_covariance`` ~15 us, against a budget
 of ~100 us per packet at 10k msg/s on one core. The functions here implement
 the same algorithms with closed-form 3x3 algebra and are tested against the
-reference to sub-millimetre agreement (tests/test_fastmath.py).
+reference (tests/test_fastmath.py).
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from __future__ import annotations
 import math
 from typing import Optional, Sequence, Tuple
 
-from skynet_common.geodesy import Vec3, ecef_to_geodetic
-from skynet_common.triangulation import PARALLEL_EPS, MultiRaySolution, Ray
+from skynet_common.geodesy import WGS84_A, WGS84_B, Vec3, ecef_to_geodetic
+from skynet_common.triangulation import PARALLEL_EPS, GateConfig, MultiRaySolution, Ray
 
 _TWO_PI_3 = 2.0 * math.pi / 3.0
 _COND_LIMIT = 1e12  # same singularity threshold as triangulate_many
@@ -140,32 +140,51 @@ def position_sigma_m(directions: Sequence[Vec3], ranges_m: Sequence[float], angu
     return math.sqrt(max((c11 + c22 + c33) / det, 0.0))
 
 
-def miss_prefilter(
-    o1: Vec3, d1: Vec3, o2: Vec3, d2: Vec3, sigma_rad: float, k_sigma: float, miss_floor_m: float,
-    min_range_m: float, max_range_m: float,
-) -> bool:
-    """Cheap necessary condition for ``gate(triangulate_rays(a, b))`` to accept.
+def fast_gate(
+    o1: Vec3, d1: Vec3, o2: Vec3, d2: Vec3, sigma_rad: float, cfg: GateConfig,
+) -> Optional[float]:
+    """``gate(triangulate_rays(a, b), cfg)`` without the geodetic conversion.
 
-    Computes the closest-approach parameters without the geodetic conversion
-    and rejects pairs that are parallel, behind, out of range or whose miss
-    distance exceeds the k-sigma bound. Survivors still go through the full
-    ``triangulate_rays`` + ``gate``; this only skips the expensive work for
-    the large majority of candidate pairs that belong to different objects.
+    Returns the normalised miss distance when the pair would be accepted and
+    None otherwise. Parallel/behind rays, ranges, parallax and the miss test
+    use exactly the reference formulas. Only the altitude test differs: it
+    uses the height above the ellipsoid along the geocentric radius, which
+    is within a few metres of the geodetic height at any plausible altitude,
+    so it can only disagree with the reference within metres of the
+    (deliberately generous) altitude limits. The matchmaker runs this on
+    every candidate and the exact ``triangulate_rays`` + ``gate`` only on the
+    winners.
     """
     cx = d1[1] * d2[2] - d1[2] * d2[1]
     cy = d1[2] * d2[0] - d1[0] * d2[2]
     cz = d1[0] * d2[1] - d1[1] * d2[0]
     denom = cx * cx + cy * cy + cz * cz
     if denom < PARALLEL_EPS:
-        return False
+        return None
     tx, ty, tz = o2[0] - o1[0], o2[1] - o1[1], o2[2] - o1[2]
     # t1 = t . (d2 x c) / denom, t2 = t . (d1 x c) / denom
     t1 = (tx * (d2[1] * cz - d2[2] * cy) + ty * (d2[2] * cx - d2[0] * cz) + tz * (d2[0] * cy - d2[1] * cx)) / denom
-    if not (min_range_m <= t1 <= max_range_m):
-        return False
+    min_r, max_r = cfg.min_range_m, cfg.max_range_m
+    if t1 <= 0.0 or not (min_r <= t1 <= max_r):
+        return None
     t2 = (tx * (d1[1] * cz - d1[2] * cy) + ty * (d1[2] * cx - d1[0] * cz) + tz * (d1[0] * cy - d1[1] * cx)) / denom
-    if not (min_range_m <= t2 <= max_range_m):
-        return False
-    # The closest-approach distance is the projection of t onto the common normal.
-    miss = abs(tx * cx + ty * cy + tz * cz) / math.sqrt(denom)
-    return miss <= k_sigma * math.hypot(t1 * sigma_rad, t2 * sigma_rad) + miss_floor_m
+    if t2 <= 0.0 or not (min_r <= t2 <= max_r):
+        return None
+    # Parallax: atan2(|c|, v1 . v2), compared without the atan2.
+    if math.degrees(math.atan2(math.sqrt(denom), d1[0] * d2[0] + d1[1] * d2[1] + d1[2] * d2[2])) < cfg.min_parallax_deg:
+        return None
+    q1x, q1y, q1z = o1[0] + d1[0] * t1, o1[1] + d1[1] * t1, o1[2] + d1[2] * t1
+    q2x, q2y, q2z = o2[0] + d2[0] * t2, o2[1] + d2[1] * t2, o2[2] + d2[2] * t2
+    ex, ey, ez = q1x - q2x, q1y - q2y, q1z - q2z
+    miss = math.sqrt(ex * ex + ey * ey + ez * ez)
+    sigma = math.hypot(t1 * sigma_rad, t2 * sigma_rad)
+    if miss > cfg.k_sigma * sigma + cfg.miss_floor_m:
+        return None
+    mx, my, mz = (q1x + q2x) * 0.5, (q1y + q2y) * 0.5, (q1z + q2z) * 0.5
+    r = math.sqrt(mx * mx + my * my + mz * mz)
+    sin2 = mz * mz / (r * r) if r > 0.0 else 0.0
+    # Ellipsoid radius along the geocentric direction (a, b semi-axes).
+    surface = WGS84_A * WGS84_B / math.sqrt(WGS84_B * WGS84_B * (1.0 - sin2) + WGS84_A * WGS84_A * sin2)
+    if not (cfg.min_alt_m <= r - surface <= cfg.max_alt_m):
+        return None
+    return miss / max(sigma, 1e-6)

@@ -54,6 +54,7 @@ class TrackSample:
     relative_intensity: float
     polarity: int
     source: str  # "det" (detector) or "lk" (optical-flow bridge)
+    bbox: Tuple[int, int, int, int] = (0, 0, 0, 0)  # x, y, w, h of the detection
 
 
 @dataclass
@@ -122,7 +123,7 @@ class Track:
         self.peak_anomaly = 0.0
         self.reported = False
         self.last_report_ns = 0
-        self.event_id: Optional[str] = None
+        self.analyzed_ns = 0  # last time kinematics and filters were evaluated
 
     @property
     def age_s(self) -> float:
@@ -142,8 +143,16 @@ class Track:
             self.samples.popleft()
 
     def recent(self, window_s: float, sources: Tuple[str, ...] = ("det", "lk")) -> List[TrackSample]:
+        """Samples of the last ``window_s`` seconds, oldest first (scans back from the newest)."""
         cutoff = self.last_meas_ns - int(window_s * 1e9)
-        return [s for s in self.samples if s.t_ns >= cutoff and s.source in sources]
+        out: List[TrackSample] = []
+        for s in reversed(self.samples):
+            if s.t_ns < cutoff:
+                break
+            if s.source in sources:
+                out.append(s)
+        out.reverse()
+        return out
 
     def filtered_by(self) -> Optional[Verdict]:
         return next(iter(self.verdicts.values()), None)
@@ -345,12 +354,14 @@ class Tracker:
 
 def _sample(t_ns: int, b: Blob, azel: np.ndarray) -> TrackSample:
     return TrackSample(t_ns, b.u, b.v, float(azel[0]), float(azel[1]), b.area, b.peak, b.snr, b.eff_area,
-                       b.relative_intensity, b.polarity, "det")
+                       b.relative_intensity, b.polarity, "det", b.bbox)
 
 
 def _bridge_sample(t_ns: int, prev: TrackSample, uv: Tuple[float, float], azel: np.ndarray) -> TrackSample:
+    x, y, w, h = prev.bbox
+    bbox = (int(round(x + uv[0] - prev.u)), int(round(y + uv[1] - prev.v)), w, h)
     return TrackSample(t_ns, uv[0], uv[1], float(azel[0]), float(azel[1]), prev.area, prev.peak, prev.snr,
-                       prev.eff_area, prev.relative_intensity, prev.polarity, "lk")
+                       prev.eff_area, prev.relative_intensity, prev.polarity, "lk", bbox)
 
 
 def _base36(n: int) -> str:

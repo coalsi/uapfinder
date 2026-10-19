@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
 RATE_WINDOW_S = 10
+RATE_COUNTERS = ("packets", "matches")
 _RING = 8192
 
 
@@ -69,22 +70,33 @@ class StatsDelta:
 
 
 class Stats:
-    """Process-local statistics; also the accumulator for shared (Redis) stats."""
+    """Process-local statistics; also the accumulator for shared (Redis) stats.
 
-    def __init__(self) -> None:
+    ``shared=True`` keeps a delta of everything recorded since the last
+    ``drain`` for the state backend to aggregate. Without it nothing is
+    accumulated, so a long-running standalone process does not grow.
+    """
+
+    _MAX_DELTA_SAMPLES = 256
+
+    def __init__(self, shared: bool = False) -> None:
         self.started = time.time()
+        self.shared = shared
         self.counters: Counter = Counter()
         self.rejected: Counter = Counter()
         self.processing = LatencyRing()
         self.backsignal = LatencyRing()
         self._buckets: Dict[int, Counter] = {}
         self._delta = StatsDelta()
-        self._max_delta_samples = 256
 
     def count(self, name: str, n: int = 1) -> None:
+        if not n:
+            return
         self.counters[name] += n
-        self._delta.counters[name] += n
-        if name in ("packets", "matches"):
+        delta = self._delta if self.shared else None
+        if delta is not None:
+            delta.counters[name] += n
+        if name in RATE_COUNTERS:
             sec = int(time.time())
             bucket = self._buckets.get(sec)
             if bucket is None:
@@ -92,23 +104,25 @@ class Stats:
                 for old in [s for s in self._buckets if s < sec - RATE_WINDOW_S - 2]:
                     del self._buckets[old]
             bucket[name] += n
-            dbucket = self._delta.per_second.get(sec)
-            if dbucket is None:
-                dbucket = self._delta.per_second[sec] = Counter()
-            dbucket[name] += n
+            if delta is not None:
+                dbucket = delta.per_second.get(sec)
+                if dbucket is None:
+                    dbucket = delta.per_second[sec] = Counter()
+                dbucket[name] += n
 
     def reject(self, reason: str, n: int = 1) -> None:
         self.rejected[reason] += n
-        self._delta.rejected[reason] += n
+        if self.shared:
+            self._delta.rejected[reason] += n
 
     def processing_ms(self, ms: float) -> None:
         self.processing.add(ms)
-        if len(self._delta.processing_ms) < self._max_delta_samples:
+        if self.shared and len(self._delta.processing_ms) < self._MAX_DELTA_SAMPLES:
             self._delta.processing_ms.append(ms)
 
     def backsignal_ms(self, ms: float) -> None:
         self.backsignal.add(ms)
-        if len(self._delta.backsignal_ms) < self._max_delta_samples:
+        if self.shared and len(self._delta.backsignal_ms) < self._MAX_DELTA_SAMPLES:
             self._delta.backsignal_ms.append(ms)
 
     def drain(self) -> StatsDelta:
@@ -116,12 +130,19 @@ class Stats:
         return delta
 
     def rate(self, name: str, now: Optional[float] = None) -> float:
-        sec = int(now if now is not None else time.time())
-        # Average over the last 10 complete seconds plus the current partial one,
-        # weighted by the elapsed time so a fresh process does not under-report.
-        elapsed = min(RATE_WINDOW_S, max(1.0, (now or time.time()) - self.started))
-        total = sum(b[name] for s, b in self._buckets.items() if sec - RATE_WINDOW_S < s <= sec)
-        return total / elapsed
+        """Events per second over the last ~10 s.
+
+        Sums the current partial second and the nine before it and divides by
+        the time those buckets actually cover (or the process age, if it is
+        younger), so the rate is neither diluted by the partial bucket nor
+        under-reported right after start.
+        """
+        now = time.time() if now is None else now
+        sec = int(now)
+        lo = sec - (RATE_WINDOW_S - 1)
+        covered = min(now - lo, now - self.started)
+        total = sum(b[name] for s, b in self._buckets.items() if lo <= s <= sec)
+        return total / max(covered, 1.0)
 
     def snapshot(self) -> Dict[str, object]:
         now = time.time()

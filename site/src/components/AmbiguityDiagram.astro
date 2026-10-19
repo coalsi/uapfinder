@@ -1,0 +1,108 @@
+---
+/**
+ * Why one camera cannot measure distance: objects of different sizes at
+ * different ranges inside the same narrow cone produce the same image.
+ * Circle radii are range × sin(half-angle), so all three subtend exactly
+ * the same angle from the camera (ranges not to scale).
+ */
+type P = [number, number];
+const C: P = [70, 330];
+const TARGET: P = [600, 70];
+const HALF = (3.4 * Math.PI) / 180;
+
+const d: P = (() => {
+  const v: P = [TARGET[0] - C[0], TARGET[1] - C[1]];
+  const l = Math.hypot(v[0], v[1]);
+  return [v[0] / l, v[1] / l];
+})();
+const rot = (p: P, a: number): P => [p[0] * Math.cos(a) - p[1] * Math.sin(a), p[0] * Math.sin(a) + p[1] * Math.cos(a)];
+const at = (r: number, dir: P = d): P => [C[0] + dir[0] * r, C[1] + dir[1] * r];
+const f = (n: number) => n.toFixed(1);
+const L = 600;
+const edge1 = at(L, rot(d, -HALF));
+const edge2 = at(L, rot(d, HALF));
+
+const objects = [
+  { r: 150, label: "bird, 50 m?" },
+  { r: 300, label: "drone, 500 m?" },
+  { r: 520, label: "aircraft, 10 km?" },
+].map((o) => ({ ...o, c: at(o.r), radius: o.r * Math.sin(HALF) }));
+const normal: P = [d[1], -d[0]];
+---
+<figure class="diagram amb">
+  <svg viewBox="0 0 640 380" role="img" aria-labelledby="amb-title amb-desc">
+    <title id="amb-title">One camera sees direction, not distance</title>
+    <desc id="amb-desc">
+      A single camera on the ground looks up along one line of sight. A small nearby bird, a mid-sized drone and a
+      large distant aircraft all fill the same narrow cone, so they produce the same dot in the image. Without a
+      second viewpoint the distance, and therefore altitude and true speed, are unknown.
+    </desc>
+    <path d={`M${f(C[0])} ${f(C[1])} L${f(edge1[0])} ${f(edge1[1])} L${f(edge2[0])} ${f(edge2[1])} Z`} fill="#8fd0ff" fill-opacity="0.09"></path>
+    <line x1={C[0]} y1={C[1]} x2={f(at(L)[0])} y2={f(at(L)[1])} stroke="#8fd0ff" stroke-width="1.6" stroke-dasharray="2 7" stroke-linecap="round"></line>
+    {
+      objects.map((o) => (
+        <g>
+          <circle cx={f(o.c[0])} cy={f(o.c[1])} r={f(o.radius)} fill="#ffd27a" fill-opacity="0.22" stroke="#ffd27a" stroke-width="1.4" />
+          <text
+            x={f(o.c[0] + normal[0] * (o.radius + 16))}
+            y={f(o.c[1] + normal[1] * (o.radius + 16))}
+            class="amb-label"
+            text-anchor="end"
+          >
+            {o.label}
+          </text>
+        </g>
+      ))
+    }
+    <path d="M0 352 Q320 334 640 352 L640 380 L0 380 Z" fill="#0f1829"></path>
+    <path d="M0 352 Q320 334 640 352" fill="none" stroke="#2a3958" stroke-width="1.5"></path>
+    <rect x={C[0] - 11} y={C[1] + 6} width="22" height="9" rx="2" fill="#22304d"></rect>
+    <path d={`M${C[0] - 9} ${C[1] + 7} a9 9 0 0 1 18 0 Z`} fill="#8fd0ff"></path>
+    <text x={C[0] + 22} y={C[1] + 14} class="amb-label amb-strong">one camera</text>
+
+    <g transform="translate(392 214)">
+      <rect width="220" height="120" rx="8" fill="#060a13" stroke="#6f7f9e" stroke-width="1.2"></rect>
+      <circle cx="122" cy="52" r="4.5" fill="#ffd27a"></circle>
+      <path d="M78 74 L116 56" stroke="#ffd27a" stroke-opacity="0.45" stroke-width="2.5" stroke-linecap="round"></path>
+      <text x="16" y="104" class="amb-small">same dot in all three cases</text>
+      <text x="16" y="28" class="amb-small amb-muted">camera image</text>
+    </g>
+  </svg>
+  <figcaption>
+    Not to scale. Angular size and angular speed are identical for all three, so a single video cannot say how
+    high, how big or how fast the object is.
+  </figcaption>
+</figure>
+
+<style>
+  .amb svg {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .amb-label {
+    fill: var(--text-2);
+    font-family: var(--font-sans);
+    font-size: 19px;
+  }
+
+  .amb-strong {
+    fill: var(--text);
+    font-weight: 600;
+  }
+
+  .amb-small {
+    fill: var(--text-2);
+    font-family: var(--font-sans);
+    font-size: 15px;
+  }
+
+  .amb-muted {
+    fill: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+</style>

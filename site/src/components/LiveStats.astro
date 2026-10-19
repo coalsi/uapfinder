@@ -1,0 +1,161 @@
+---
+import { API_BASE, links } from "../config";
+import { buildStatsView } from "../lib/stats";
+
+// Server-rendered placeholder: what visitors without JavaScript, or before
+// the first response, see. The client script replaces values in place.
+const initial = buildStatsView(null, null);
+---
+<div class="live" data-live-stats data-api-base={API_BASE} data-state="loading">
+  <div class="live-head">
+    <h2 id="live-title" class="live-title">
+      <span class="dot" aria-hidden="true"></span>
+      Network status
+    </h2>
+    <p class="live-note" role="status" data-live-note>Checking the network…</p>
+  </div>
+  <dl class="tiles" aria-labelledby="live-title">
+    {
+      initial.tiles.map((t) => (
+        <div class="tile" data-tile={t.key}>
+          <dt>{t.label}</dt>
+          <dd>
+            <span class="value" data-value>
+              {t.value}
+            </span>
+            <span class="visually-hidden" data-detail>
+              {t.detail}
+            </span>
+          </dd>
+        </div>
+      ))
+    }
+  </dl>
+  <p class="live-foot small muted">
+    Figures from the public <a href={links.apiDoc}>network API</a>, refreshed every 30 seconds. Packets are
+    metadata only, averaged over the last 10 seconds.
+  </p>
+  <noscript><p class="small muted">Turn on JavaScript to load live figures.</p></noscript>
+</div>
+
+<script>
+  import { initLiveStats } from "../scripts/live-stats";
+  initLiveStats();
+</script>
+
+<style>
+  .live {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: clamp(18px, 3vw, 28px);
+  }
+
+  .live-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px 20px;
+    margin-bottom: 18px;
+  }
+
+  .live-title {
+    font-size: 1rem;
+    font-family: var(--font-mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-2);
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+  }
+
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--muted);
+    box-shadow: 0 0 0 3px rgb(142 155 178 / 0.18);
+  }
+
+  [data-state="live"] .dot {
+    background: var(--ok);
+    box-shadow: 0 0 0 3px rgb(127 227 174 / 0.2);
+  }
+
+  [data-state="launching"] .dot {
+    background: var(--warn);
+    box-shadow: 0 0 0 3px rgb(255 203 107 / 0.2);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    [data-state="live"] .dot {
+      animation: pulse 2.4s ease-in-out infinite;
+    }
+  }
+
+  @keyframes pulse {
+    50% {
+      box-shadow: 0 0 0 6px rgb(127 227 174 / 0.05);
+    }
+  }
+
+  .live-note {
+    margin: 0;
+    color: var(--text-2);
+    font-size: 0.95rem;
+    max-width: 60ch;
+  }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0 0 14px;
+  }
+
+  @media (min-width: 760px) {
+    .tiles {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  .tile {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    min-width: 0;
+  }
+
+  .tile dt {
+    color: var(--muted);
+    font-size: 0.86rem;
+    margin-bottom: 4px;
+  }
+
+  .tile dd {
+    margin: 0;
+  }
+
+  .value {
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.3rem);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  [data-state="loading"] .value,
+  [data-state="launching"] .value {
+    color: var(--muted);
+  }
+
+  .live-foot {
+    margin: 0;
+  }
+</style>

@@ -1,97 +1,131 @@
 """In-process state for single-instance deployments (the fastest backend).
 
 Everything lives in dicts and sorted lists owned by the event loop, so no
-locking is needed: every method runs to completion without awaiting.
+locking is needed: no method awaits anything, so each runs to completion.
 Expiring collections (replay windows, pair claims, track links) are
 insertion-ordered dicts whose entries share one TTL, so the oldest entry is
 always first and pruning pops from the front instead of scanning.
+
+The matchmaker reads neighbour detections in place (``window``) instead of
+receiving copies, which is what makes this backend several times cheaper
+per packet than a networked one.
 """
 
 from __future__ import annotations
 
 import bisect
+import collections
 import math
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
 
 from skynet_common.geodesy import haversine_m
 
+from ..matchmaker import Window
 from ..models import ClipRecord, Commit, Detection, NodeRecord, TrackState
 from ..stats import StatsDelta
 from .base import Admission, AdmitResult, StateBackend, UdpAddr, event_id_key
 
 _CELL_DEG = 0.5
 _MOVE_REINDEX_M = 50.0
-_REPLAY_TTL_NS = 30_000_000_000  # > 2x the freshness window: older replays are rejected as stale
-_DET_RETENTION_NS = 5_000_000_000
 _PRUNE_INTERVAL_NS = 1_000_000_000
+_SLOW_PRUNE_INTERVAL_NS = 60_000_000_000
+_MAX_COMMANDS_PER_NODE = 1_000
 
 PointTuple = Tuple[int, float, float, float, float, float, Tuple[str, ...]]
 
 
 class _Expiring:
-    """Keys sharing one TTL, oldest first."""
+    """Keys sharing one TTL, oldest first: key -> (value, expiry_ns).
+
+    An OrderedDict, not a dict: finding the first key of a plain dict after
+    many deletions from its front walks over the deleted slots, which makes
+    front-pruning quadratic.
+    """
 
     __slots__ = ("ttl_ns", "items")
 
     def __init__(self, ttl_ns: int):
         self.ttl_ns = ttl_ns
-        self.items: Dict[str, Any] = {}
+        self.items: "collections.OrderedDict[str, Tuple[Any, int]]" = collections.OrderedDict()
 
     def prune(self, now_ns: int) -> None:
         items = self.items
         while items:
-            key = next(iter(items))
-            if items[key][1] > now_ns:
+            key, (_, expiry) = next(iter(items.items()))
+            if expiry > now_ns:
                 break
-            del items[key]
+            items.popitem(last=False)
+
+    def put(self, key: str, value: Any, now_ns: int) -> None:
+        self.items[key] = (value, now_ns + self.ttl_ns)
+        self.items.move_to_end(key)  # keep expiry order
+
+    def get(self, key: str, now_ns: int) -> Optional[Any]:
+        entry = self.items.get(key)
+        return entry[0] if entry is not None and entry[1] > now_ns else None
+
+
+def _insert_sorted(ts: List[int], dets: List[Detection], d: Detection, cutoff_ns: int) -> None:
+    if not ts or d.t_ns >= ts[-1]:
+        ts.append(d.t_ns)
+        dets.append(d)
+    else:
+        i = bisect.bisect_right(ts, d.t_ns)
+        ts.insert(i, d.t_ns)
+        dets.insert(i, d)
+    if ts[0] < cutoff_ns:
+        cut = bisect.bisect_left(ts, cutoff_ns)
+        del ts[:cut]
+        del dets[:cut]
 
 
 class _NodeDetections:
-    __slots__ = ("ts", "dets")
+    """One node's recent detections, time-sorted, plus a per-local-track
+    index so guided searches slice one track without filtering."""
+
+    __slots__ = ("ts", "dets", "tracks")
 
     def __init__(self) -> None:
         self.ts: List[int] = []
         self.dets: List[Detection] = []
+        self.tracks: Dict[str, Tuple[List[int], List[Detection]]] = {}
 
     def add(self, d: Detection, cutoff_ns: int) -> None:
-        ts = self.ts
-        if not ts or d.t_ns >= ts[-1]:
-            ts.append(d.t_ns)
-            self.dets.append(d)
-        else:
-            i = bisect.bisect_right(ts, d.t_ns)
-            ts.insert(i, d.t_ns)
-            self.dets.insert(i, d)
-        if ts[0] < cutoff_ns:
-            cut = bisect.bisect_left(ts, cutoff_ns)
-            del ts[:cut]
-            del self.dets[:cut]
+        _insert_sorted(self.ts, self.dets, d, cutoff_ns)
+        if d.track_id is not None:
+            entry = self.tracks.get(d.track_id)
+            if entry is None:
+                entry = self.tracks[d.track_id] = ([], [])
+            _insert_sorted(entry[0], entry[1], d, cutoff_ns)
 
-    def window(self, lo_ns: int, hi_ns: int) -> List[Detection]:
-        i = bisect.bisect_left(self.ts, lo_ns)
-        j = bisect.bisect_right(self.ts, hi_ns)
-        return self.dets[i:j]
+    def prune_tracks(self, cutoff_ns: int) -> None:
+        for tid in [t for t, (ts, _) in self.tracks.items() if ts[-1] < cutoff_ns]:
+            del self.tracks[tid]
 
 
 class MemoryState(StateBackend):
     name = "memory"
+    prefetch = False
 
-    def __init__(self, events_maxlen: int = 10_000, detection_retention_ns: int = _DET_RETENTION_NS,
-                 max_points: int = 2_000, track_retention_ns: int = 6 * 3600 * 1_000_000_000):
+    def __init__(self, events_maxlen: int = 10_000, detection_retention_ns: int = 5_000_000_000,
+                 max_points: int = 2_000, track_retention_ns: int = 6 * 3600 * 1_000_000_000,
+                 replay_window_ns: int = 30_000_000_000, node_active_ns: int = 60_000_000_000):
         self.events_maxlen = events_maxlen
         self.detection_retention_ns = detection_retention_ns
         self.max_points = max_points
         self.track_retention_ns = track_retention_ns
+        self.replay_window_ns = replay_window_ns
+        self.node_active_ns = node_active_ns
         self.nodes: Dict[str, NodeRecord] = {}
         self._grid: Dict[Tuple[int, int], set] = {}
         self._indexed: Dict[str, Tuple[float, float, Tuple[int, int]]] = {}
         self._grid_version = 0
         self._neighbour_cache: Dict[str, Tuple[int, float, List[str]]] = {}
         self._detections: Dict[str, _NodeDetections] = {}
-        self._replay: Dict[str, Dict[Tuple[int, int], int]] = {}
+        self._replay: Dict[str, "collections.OrderedDict[Tuple[int, int], int]"] = {}
         self._claims: Dict[int, _Expiring] = {}
-        self._links = _Expiring(0)
+        self._links: Dict[int, _Expiring] = {}
         self.tracks: Dict[str, TrackState] = {}
         self._points: Dict[str, List[PointTuple]] = {}
         self._events: List[Dict[str, Any]] = []
@@ -99,8 +133,9 @@ class MemoryState(StateBackend):
         self._last_event = (0, -1)
         self._commands: Dict[str, List[str]] = {}
         self._clips: Dict[str, ClipRecord] = {}
+        self._rate: Dict[str, Deque[float]] = {}
         self._next_prune_ns = 0
-        self._next_track_prune_ns = 0
+        self._next_slow_prune_ns = 0
 
     # --- spatial index -----------------------------------------------------
 
@@ -112,14 +147,26 @@ class MemoryState(StateBackend):
         prev = self._indexed.get(node_id)
         if prev is not None and haversine_m(prev[0], prev[1], lat, lon) < _MOVE_REINDEX_M:
             return
-        cell = self._cell(lat, lon)
         if prev is not None:
             self._grid[prev[2]].discard(node_id)
+        cell = self._cell(lat, lon)
         self._grid.setdefault(cell, set()).add(node_id)
         self._indexed[node_id] = (lat, lon, cell)
         self._grid_version += 1
 
+    def _unindex(self, node_id: str) -> None:
+        prev = self._indexed.pop(node_id, None)
+        if prev is not None:
+            self._grid[prev[2]].discard(node_id)
+            self._grid_version += 1
+        self._neighbour_cache.pop(node_id, None)
+
     def nodes_within(self, node_id: str, lat: float, lon: float, radius_m: float) -> List[str]:
+        """Indexed (recently active) nodes within ``radius_m``, excluding ``node_id``.
+
+        Results are cached per node until any node joins, leaves or moves
+        more than 50 m, so in a steady network this is a dict lookup.
+        """
         cached = self._neighbour_cache.get(node_id)
         if cached is not None and cached[0] == self._grid_version and cached[1] == radius_m:
             return cached[2]
@@ -145,48 +192,70 @@ class MemoryState(StateBackend):
         self._neighbour_cache[node_id] = (self._grid_version, radius_m, found)
         return found
 
+    async def neighbours(self, reporters: Dict[str, Tuple[float, float]], radius_m: float, now_ns: int
+                         ) -> Dict[str, List[str]]:
+        return {n: self.nodes_within(n, lat, lon, radius_m) for n, (lat, lon) in reporters.items()}
+
     # --- hot path ----------------------------------------------------------
+
+    def window(self, node_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
+        nd = self._detections.get(node_id)
+        if nd is None:
+            return ()
+        ts = nd.ts
+        return nd.dets[bisect.bisect_left(ts, lo_ns) : bisect.bisect_right(ts, hi_ns)]
+
+    def track_window(self, node_id: str, track_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
+        nd = self._detections.get(node_id)
+        entry = nd.tracks.get(track_id) if nd is not None else None
+        if entry is None:
+            return ()
+        ts = entry[0]
+        return entry[1][bisect.bisect_left(ts, lo_ns) : bisect.bisect_right(ts, hi_ns)]
 
     def _prune(self, now_ns: int) -> None:
         self._next_prune_ns = now_ns + _PRUNE_INTERVAL_NS
-        cutoff = now_ns - _REPLAY_TTL_NS
+        cutoff = now_ns - self.replay_window_ns
         for node_id in list(self._replay):
             seen = self._replay[node_id]
             while seen:
-                k = next(iter(seen))
-                if seen[k] > cutoff:
+                _, first_seen = next(iter(seen.items()))
+                if first_seen > cutoff:
                     break
-                del seen[k]
+                seen.popitem(last=False)
             if not seen:
                 del self._replay[node_id]
-        for claims in self._claims.values():
-            claims.prune(now_ns)
-        self._links.prune(now_ns)
-        det_cutoff = now_ns - self.detection_retention_ns
-        for node_id in list(self._detections):
-            nd = self._detections[node_id]
-            if not nd.ts or nd.ts[-1] < det_cutoff:
-                del self._detections[node_id]
-        if now_ns >= self._next_track_prune_ns:
-            self._next_track_prune_ns = now_ns + 60_000_000_000
+        for exp in (*self._claims.values(), *self._links.values()):
+            exp.prune(now_ns)
+        det_cutoff = now_ns - self.detection_retention_ns - self.replay_window_ns
+        for node_id in [n for n, nd in self._detections.items() if not nd.ts or nd.ts[-1] < det_cutoff]:
+            del self._detections[node_id]
+        for nd in self._detections.values():
+            nd.prune_tracks(nd.ts[-1] - self.detection_retention_ns)
+        if now_ns >= self._next_slow_prune_ns:
+            self._next_slow_prune_ns = now_ns + _SLOW_PRUNE_INTERVAL_NS
+            inactive = now_ns - self.node_active_ns
+            for node_id in [n for n in self._indexed if self.nodes[n].last_seen_ns < inactive]:
+                self._unindex(node_id)
             stale = now_ns - self.track_retention_ns
             for tid in [t for t, tr in self.tracks.items() if tr.last_ns < stale]:
                 del self.tracks[tid]
                 self._points.pop(tid, None)
+            for rid in [r for r, c in self._clips.items() if c.issued_ns < stale and c.track_id not in self.tracks]:
+                del self._clips[rid]
 
-    async def admit(self, items: Sequence[Admission], now_ns: int, radius_m: float,
-                    udp_addrs: Optional[Dict[str, UdpAddr]] = None) -> AdmitResult:
+    async def admit(self, items: Sequence[Admission], now_ns: int, windows: Optional[Dict[str, Window]] = None
+                    ) -> AdmitResult:
         if now_ns >= self._next_prune_ns:
             self._prune(now_ns)
         fresh: List[bool] = []
-        reporters: Dict[str, Tuple[float, float]] = {}
         refreshed: Dict[str, NodeRecord] = {}
-        cutoff = now_ns - self.detection_retention_ns
+        retention = self.detection_retention_ns
         for item in items:
             u = item.update
             seen = self._replay.get(u.node_id)
             if seen is None:
-                seen = self._replay[u.node_id] = {}
+                seen = self._replay[u.node_id] = collections.OrderedDict()
             key = (item.seq, u.t_ns)
             if key in seen:
                 fresh.append(False)
@@ -198,7 +267,7 @@ class MemoryState(StateBackend):
                 node = self.nodes[u.node_id] = NodeRecord(u.node_id)
             node.lat, node.lon, node.alt_m = u.lat, u.lon, u.alt_m
             node.yaw_deg, node.pitch_deg, node.roll_deg = u.yaw_deg, u.pitch_deg, u.roll_deg
-            if u.fov_h_deg is not None:
+            if u.is_heartbeat:
                 node.fov_h_deg, node.fov_v_deg = u.fov_h_deg, u.fov_v_deg
                 node.status = u.status or {}
                 node.software_version = u.software_version or None
@@ -210,50 +279,33 @@ class MemoryState(StateBackend):
                 nd = self._detections.get(d.node_id)
                 if nd is None:
                     nd = self._detections[d.node_id] = _NodeDetections()
-                nd.add(d, cutoff)
-                reporters[d.node_id] = (u.lat, u.lon)
-        neighbours = {n: self.nodes_within(n, lat, lon, radius_m) for n, (lat, lon) in reporters.items()}
-        return AdmitResult(fresh, neighbours, refreshed)
-
-    async def fetch_detections(self, windows: Dict[str, Tuple[int, int]], active_since_ns: int
-                               ) -> Dict[str, List[Detection]]:
-        out: Dict[str, List[Detection]] = {}
-        for node_id, (lo, hi) in windows.items():
-            node = self.nodes.get(node_id)
-            nd = self._detections.get(node_id)
-            if node is None or nd is None or node.last_seen_ns < active_since_ns:
-                continue
-            found = nd.window(lo, hi)
-            if found:
-                out[node_id] = found
-        return out
+                # Relative to the node's own clock, so delayed (but still fresh)
+                # packets are kept long enough to be matched.
+                nd.add(d, d.t_ns - retention)
+        return AdmitResult(fresh, self, refreshed)
 
     async def claim(self, keys: Sequence[str], ttl_ms: int) -> List[bool]:
         claims = self._claims.get(ttl_ms)
         if claims is None:
             claims = self._claims[ttl_ms] = _Expiring(ttl_ms * 1_000_000)
         now = time.time_ns()
-        expiry = now + claims.ttl_ns
         out = []
-        items = claims.items
         for key in keys:
-            entry = items.get(key)
-            if entry is not None and entry[1] > now:
+            if claims.get(key, now) is not None:
                 out.append(False)
             else:
-                items.pop(key, None)
-                items[key] = (True, expiry)
+                claims.put(key, True, now)
                 out.append(True)
         return out
 
     async def get_links(self, keys: Sequence[str]) -> Dict[str, str]:
         now = time.time_ns()
-        links = self._links.items
-        out = {}
-        for key in keys:
-            entry = links.get(key)
-            if entry is not None and entry[1] > now:
-                out[key] = entry[0]
+        out: Dict[str, str] = {}
+        for links in self._links.values():
+            for key in keys:
+                tid = links.get(key, now)
+                if tid is not None:
+                    out[key] = tid
         return out
 
     async def get_tracks(self, track_ids: Sequence[str]) -> Dict[str, TrackState]:
@@ -268,11 +320,12 @@ class MemoryState(StateBackend):
     async def commit(self, commit: Commit, link_ttl_ms: int, stats: Optional[StatsDelta] = None
                      ) -> List[Dict[str, Any]]:
         if commit.links:
-            expiry = time.time_ns() + link_ttl_ms * 1_000_000
-            links = self._links.items
+            links = self._links.get(link_ttl_ms)
+            if links is None:
+                links = self._links[link_ttl_ms] = _Expiring(link_ttl_ms * 1_000_000)
+            now = time.time_ns()
             for key, tid in commit.links.items():
-                links.pop(key, None)
-                links[key] = (tid, expiry)
+                links.put(key, tid, now)
         for tid, track in commit.tracks.items():
             self.tracks[tid] = track
         for tid, points in commit.new_points.items():
@@ -284,7 +337,10 @@ class MemoryState(StateBackend):
         for clip in commit.clips:
             self._clips[clip.request_id] = clip
         for node_id, cmds in commit.commands.items():
-            self._commands.setdefault(node_id, []).extend(cmds)
+            queue = self._commands.setdefault(node_id, [])
+            queue.extend(cmds)
+            if len(queue) > _MAX_COMMANDS_PER_NODE:
+                del queue[: len(queue) - _MAX_COMMANDS_PER_NODE]
         out = []
         for event in commit.events:
             key = self._next_event_id()
@@ -305,11 +361,12 @@ class MemoryState(StateBackend):
 
     async def register_node(self, node_id: str, label: Optional[str], now_ns: int) -> Tuple[NodeRecord, bool]:
         node = self.nodes.get(node_id)
-        created = node is None or node.registered_ns is None
         if node is None:
             node = self.nodes[node_id] = NodeRecord(node_id)
-        node.label = label if label is not None else node.label
-        if node.registered_ns is None:
+        created = node.registered_ns is None
+        if label is not None:
+            node.label = label
+        if created:
             node.registered_ns = now_ns
         return node, created
 
@@ -366,3 +423,21 @@ class MemoryState(StateBackend):
 
     async def put_clip(self, clip: ClipRecord) -> None:
         self._clips[clip.request_id] = clip
+
+    async def track_clips(self, track_id: str) -> List[ClipRecord]:
+        return sorted((c for c in self._clips.values() if c.track_id == track_id), key=lambda c: c.issued_ns)
+
+    # --- misc ----------------------------------------------------------------------
+
+    async def rate_limit(self, key: str, limit: int, window_s: float) -> bool:
+        now = time.monotonic()
+        hits = self._rate.get(key)
+        if hits is None:
+            if len(self._rate) > 100_000:  # bound memory under a flood of distinct keys
+                self._rate = {k: v for k, v in self._rate.items() if v and v[-1] > now - window_s}
+            hits = self._rate[key] = collections.deque()
+        while hits and hits[0] <= now - window_s:
+            hits.popleft()
+        hits.append(now)
+        return len(hits) <= limit
+

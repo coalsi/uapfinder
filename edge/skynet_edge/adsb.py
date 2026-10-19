@@ -84,18 +84,20 @@ def _num(v: Any) -> Optional[float]:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
-def parse_aircraft_json(data: Dict[str, Any]) -> List[Aircraft]:
-    """Parse readsb/dump1090 ``aircraft.json`` or an ADSBx-v2-style response."""
-    if "ac" in data:
-        items = data.get("ac") or []
-        now_s = (_num(data.get("now")) or time.time() * 1000.0) / 1000.0
+def parse_aircraft_json(data: Dict[str, Any], received_ns: Optional[int] = None) -> List[Aircraft]:
+    """Parse readsb/dump1090 ``aircraft.json`` or an ADSBx-v2-style response.
+
+    ``received_ns`` (default: now) stands in for a missing ``now`` field;
+    some ADSBx-compatible endpoints omit it.
+    """
+    items = data.get("ac") if "ac" in data else data.get("aircraft")
+    now = _num(data.get("now"))
+    if now is None:
+        now_s = (time.time_ns() if received_ns is None else received_ns) / 1e9
     else:
-        items = data.get("aircraft") or []
-        now_s = _num(data.get("now")) or time.time()
-        if now_s > 1e11:  # some proxies re-serve v1 files with millisecond 'now'
-            now_s /= 1000.0
+        now_s = now / 1000.0 if now > 1e11 else now  # ADSBx v2 uses milliseconds, readsb files seconds
     out: List[Aircraft] = []
-    for a in items:
+    for a in items or []:
         if not isinstance(a, dict):
             continue
         lat, lon = _num(a.get("lat")), _num(a.get("lon"))
@@ -181,7 +183,7 @@ class AdsbFeed:
             data = self._fetch()
             if data is None:
                 return
-            aircraft = parse_aircraft_json(data)
+            aircraft = parse_aircraft_json(data, self._clock())
         except (OSError, ValueError, requests.RequestException) as exc:
             self.errors += 1
             log.warning("ADS-B poll failed: %s", exc)

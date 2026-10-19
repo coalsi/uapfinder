@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -48,7 +48,13 @@ def lk_flow(prev: np.ndarray, cur: np.ndarray, u: float, v: float, win: int, lev
 
 
 class CloudFlow:
-    """Dense flow field of the sky at low resolution, in full-resolution px/s."""
+    """Dense flow field of the sky at low resolution, in full-resolution px/s.
+
+    ``update`` only keeps a downscaled copy of every ``every``-th frame
+    (cheap). The Farneback field between the last two copies is computed on
+    the first ``velocity_at`` call after a new copy arrived, so it costs
+    nothing unless the cloud filter has a diffuse candidate to check.
+    """
 
     def __init__(self, width: int, height: int, every: int, small_width: int):
         self.width = width
@@ -57,31 +63,37 @@ class CloudFlow:
         self.sw = max(16, min(small_width, width))
         self.sh = max(9, int(round(height * self.sw / width)))
         self.scale = width / self.sw
-        self._prev: Optional[np.ndarray] = None
-        self._prev_t_ns = 0
+        self._frames: List[Tuple[np.ndarray, int]] = []  # last two (small frame, t_ns)
         self._count = 0
-        self.field: Optional[np.ndarray] = None  # (sh, sw, 2) px/s at full resolution
-        self.field_t_ns = 0
+        self._field: Optional[np.ndarray] = None  # (sh, sw, 2) px/s at full resolution
+        self._field_t_ns = 0
+        self.computed = 0
 
-    def update(self, y: np.ndarray, t_ns: int) -> bool:
-        """Feed a frame; recomputes the field every ``every`` frames. Returns True when updated."""
+    def update(self, y: np.ndarray, t_ns: int) -> None:
+        """Feed a frame; keeps a small copy every ``every`` frames."""
         self._count += 1
-        if self._prev is not None and self._count % self.every:
-            return False
+        if self._frames and self._count % self.every:
+            return
         small = cv2.resize(y, (self.sw, self.sh), interpolation=cv2.INTER_AREA)
-        updated = False
-        if self._prev is not None and t_ns > self._prev_t_ns:
-            flow = cv2.calcOpticalFlowFarneback(self._prev, small, None, 0.5, 3, 9, 3, 5, 1.1, 0)
-            dt = (t_ns - self._prev_t_ns) / 1e9
-            self.field = flow * (self.scale / dt)
-            self.field_t_ns = t_ns
-            updated = True
-        self._prev, self._prev_t_ns = small, t_ns
-        return updated
+        self._frames = (self._frames + [(small, t_ns)])[-2:]
+
+    def field(self) -> Optional[np.ndarray]:
+        if len(self._frames) < 2:
+            return None
+        (a, ta), (b, tb) = self._frames
+        if tb <= ta:
+            return None
+        if self._field_t_ns != tb:
+            flow = cv2.calcOpticalFlowFarneback(a, b, None, 0.5, 2, 9, 3, 5, 1.1, 0)
+            self._field = flow * (self.scale / ((tb - ta) / 1e9))
+            self._field_t_ns = tb
+            self.computed += 1
+        return self._field
 
     def velocity_at(self, u: float, v: float, radius_px: float) -> Optional[Tuple[float, float]]:
         """Median flow (px/s) in a window around a full-resolution point."""
-        if self.field is None:
+        field = self.field()
+        if field is None:
             return None
         r = max(1, int(round(radius_px / self.scale)))
         cx, cy = int(u / self.scale), int(v / self.scale)
@@ -89,5 +101,5 @@ class CloudFlow:
         y0, y1 = max(0, cy - r), min(self.sh, cy + r + 1)
         if x0 >= x1 or y0 >= y1:
             return None
-        patch = self.field[y0:y1, x0:x1].reshape(-1, 2)
+        patch = field[y0:y1, x0:x1].reshape(-1, 2)
         return float(np.median(patch[:, 0])), float(np.median(patch[:, 1]))

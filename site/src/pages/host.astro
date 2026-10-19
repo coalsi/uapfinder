@@ -1,0 +1,545 @@
+---
+import Base from "../layouts/Base.astro";
+import { links, PRICES_AS_OF } from "../config";
+
+const description =
+  "Host a UAP Finder node: who makes a good host, a researched parts list with approximate prices, estimated power and bandwidth use, and an overview of setup.";
+
+interface Part {
+  part: string;
+  example: string;
+  price: string;
+  note: string;
+  optional?: string;
+}
+
+const parts: Part[] = [
+  {
+    part: "Computer",
+    example: "NVIDIA Jetson Orin Nano Super Developer Kit (8 GB)",
+    price: "≈ $399",
+    note: "List price, raised from $249 in July 2026 and often out of stock. Includes a 19 V power supply. An original Orin Nano developer kit also works and gains Super mode with JetPack 6.2.",
+  },
+  {
+    part: "Camera",
+    example: "Arducam 12.3 MP IMX477 HQ camera for Jetson (B0249), CS mount",
+    price: "≈ $60–76",
+    note: "Supports 1920 × 1080 at 60 fps. The developer kit uses 22-pin, 0.5 mm camera cables; this kit includes one. Enable the camera with NVIDIA's jetson-io tool.",
+  },
+  {
+    part: "Lens",
+    example: "≈ 90° wide-angle M12 lens with CS adapter (e.g. Arducam M23356H09, 3.56 mm)",
+    price: "≈ $19–25",
+    note: "Matches the software's default 90° field of view. Its distortion is calibrated once during setup.",
+  },
+  {
+    part: "GPS with PPS",
+    example: "Adafruit Ultimate GPS Breakout v3, or a u-blox board such as SparkFun NEO-M9N",
+    price: "≈ $30–71",
+    note: "Must expose a pulse-per-second (PPS) pin for precise time. USB-only GPS dongles without a PPS wire are not accurate enough.",
+  },
+  {
+    part: "GPS antenna",
+    example: "Active antenna, 28 dB, SMA (e.g. Adafruit 960) plus a u.FL-to-SMA adapter",
+    price: "≈ $22–30",
+    note: "Gives a reliable fix from inside an enclosure.",
+  },
+  {
+    part: "Storage",
+    example: "NVMe M.2 SSD, 256–512 GB",
+    price: "≈ $60–150",
+    note: "Clips are written at about 187 MB/s, so NVMe is required; microSD is too slow. SSD prices rose sharply during 2026.",
+  },
+  {
+    part: "ADS-B receiver",
+    optional: "Recommended",
+    example: "RTL-SDR-type USB receiver (e.g. RTL-SDR Blog V4L) and a 1090 MHz antenna",
+    price: "≈ $55–75",
+    note: "Lets the node recognise aircraft from their own broadcasts without depending on an online feed.",
+  },
+  {
+    part: "Orientation sensor",
+    optional: "Optional",
+    example: "Adafruit BNO055 breakout",
+    price: "≈ $30",
+    note: "Notices if the mount has moved. Not precise enough to measure pointing, which comes from the stars.",
+  },
+  {
+    part: "Enclosure",
+    example: "Weatherproof box with a clear acrylic dome, cable glands and an optional dew heater",
+    price: "≈ $40–100",
+    note: "Estimate. One all-sky camera parts list prices a 100 mm dome at about €16 and a small heater ring at about €25. Plan for shade and ventilation.",
+  },
+  {
+    part: "Mounting and cabling",
+    example: "Pole or bracket, outdoor-rated power and Ethernet",
+    price: "≈ $20–60",
+    note: "Estimate; depends entirely on the site.",
+  },
+];
+---
+<Base title="Host a node" description={description}>
+  <header class="page-hero">
+    <div class="wrap">
+      <p class="eyebrow">Host a node</p>
+      <h1>Put a stereo eye on your patch of sky</h1>
+      <p class="lead">
+        A node is a small, quiet computer and a sky-facing camera that runs around the clock. Each new node makes new
+        stereo pairs with its neighbours, and the most valuable sites are often where nobody else is watching.
+      </p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="/get-involved/#signup">Register your interest</a>
+        <a class="btn btn-secondary" href={links.coverageMap}>See where nodes are needed</a>
+      </div>
+      <nav aria-label="On this page">
+        <ul class="toc">
+          <li><a href="#good-host">Good hosts</a></li>
+          <li><a href="#cost">Parts and cost</a></li>
+          <li><a href="#power">Power</a></li>
+          <li><a href="#bandwidth">Bandwidth</a></li>
+          <li><a href="#setup">Setup</a></li>
+          <li><a href="#coverage">Coverage map</a></li>
+          <li><a href="#placement">Placement tips</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <section id="good-host" class="section anchor-section" aria-labelledby="host-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="host-title">Who makes a good host</h2>
+        <p>You don't need to be an astronomer. You do need a spot like this, and some patience with setup.</p>
+      </div>
+      <div class="grid grid-3">
+        <article class="card">
+          <h3>A clear view of the sky</h3>
+          <p>
+            As much open sky as possible above about 10–15° elevation: a roof, a pole in the yard or open land. Avoid
+            direct glare from streetlights and security lights.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Power and home internet</h3>
+          <p>
+            A mains outlet that can stay on 24/7, ideally outdoor-rated and protected by a GFCI/RCD, and a home
+            connection. Wired Ethernet to the node is the most reliable.
+          </p>
+        </article>
+        <article class="card">
+          <h3>The right distance from others</h3>
+          <p>
+            <strong>5–40 miles from at least one other node</strong>, ideally two or more. Rural and remote sites
+            fill blind spots between towns and are especially valuable.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Permission</h3>
+          <p>
+            Your own property, or consent from your landlord or homeowners' association, and local rules that allow a
+            small outdoor camera. See the <a href="/faq/#legal">FAQ on legality and neighbours</a>.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Some technical comfort</h3>
+          <p>
+            Setup involves flashing an operating system, connecting a camera and GPS module, and editing a
+            configuration file, or a friend who enjoys that sort of thing.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Staying power</h3>
+          <p>
+            Stereo pairs only work while both nodes are online. A node that runs for months is worth far more than
+            one that runs for a week.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="cost" class="section anchor-section" aria-labelledby="cost-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="cost-title">What it costs</h2>
+        <p>
+          A complete node built from these parts costs roughly <strong>$700–1,000</strong> before tax and shipping.
+          Prices are approximate, in US dollars, as of {PRICES_AS_OF}, and have been volatile during 2026; check
+          current listings before buying. Examples are illustrations, not endorsements; any equivalent part works.
+          <a href={`${links.repo}/blob/main/site/SOURCES.md`}>Sources for these prices</a>.
+        </p>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="parts-caption">
+        <table class="parts">
+          <caption id="parts-caption">Node parts list, approximate prices as of {PRICES_AS_OF}</caption>
+          <thead>
+            <tr>
+              <th scope="col">Part</th>
+              <th scope="col">Example</th>
+              <th scope="col" class="num">Approx. price</th>
+              <th scope="col">Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {
+              parts.map((p) => (
+                <tr>
+                  <th scope="row">
+                    {p.part}
+                    {p.optional && (
+                      <>
+                        <br />
+                        <span class="badge">{p.optional}</span>
+                      </>
+                    )}
+                  </th>
+                  <td>{p.example}</td>
+                  <td class="num">{p.price}</td>
+                  <td class="note">{p.note}</td>
+                </tr>
+              ))
+            }
+          </tbody>
+          <tfoot>
+            <tr>
+              <th scope="row" colspan="2">Typical total, including the recommended ADS-B receiver</th>
+              <td class="num">≈ $700–1,000</td>
+              <td class="note">Excludes tax, shipping and any tools.</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="callout callout--star">
+        <p>
+          <strong>Register before you buy.</strong> Spacing matters. <a href="/get-involved/#signup">Tell us roughly
+          where you are</a> and check the <a href={links.coverageMap}>coverage map</a> first, so your node will have a
+          stereo partner within 5–40 miles.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="power" class="section anchor-section" aria-labelledby="power-title">
+    <div class="wrap split split--wide-left">
+      <div class="prose">
+        <h2 id="power-title">Power use (estimate)</h2>
+        <p>
+          The developer kit's highest power mode is capped at 25 W. Continuous 1080p, 60 fps analysis is expected to
+          run in the upper power modes, and the SSD, camera, GPS, ADS-B receiver and any dew heater add a few watts.
+          We therefore budget <strong>15–30 W on average</strong>.
+        </p>
+        <p>
+          That is 0.36–0.72 kWh a day, or roughly <strong>130–260 kWh a year</strong>. At the US average residential
+          price of about 18.3¢ per kWh that the US Energy Information Administration forecasts for 2026, it comes to
+          roughly <strong>$24–48 a year</strong>; your tariff will differ.
+        </p>
+        <p class="small muted">
+          Basis: NVIDIA's published power modes for the Orin Nano Super developer kit plus allowances for peripherals.
+          This has not yet been measured on a complete node. A plug-in power meter, or the board's own
+          <code>tegrastats</code> readout, will tell you the real figure.
+        </p>
+      </div>
+      <dl class="figures">
+        <div><dt>Average draw</dt><dd>15–30 W</dd></div>
+        <div><dt>Per year</dt><dd>130–260 kWh</dd></div>
+        <div><dt>At 18.3¢/kWh</dt><dd>$24–48</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section id="bandwidth" class="section anchor-section" aria-labelledby="bw-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="bw-title">Bandwidth use (estimate)</h2>
+        <p>
+          Video is analysed on the node, so day-to-day traffic is small. These estimates are calculated from the
+          message sizes in the wire protocol; they have not yet been measured on a live network.
+        </p>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="bw-caption">
+        <table>
+          <caption id="bw-caption">Estimated upload traffic per node</caption>
+          <thead>
+            <tr>
+              <th scope="col">Situation</th>
+              <th scope="col">Estimate</th>
+              <th scope="col">Basis</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Idle, UDP transport</th>
+              <td>≈ 5 MB a day (≈ 150 MB a month)</td>
+              <td>One signed heartbeat of about 550 bytes every 10 seconds.</td>
+            </tr>
+            <tr>
+              <th scope="row">Idle, HTTPS transport</th>
+              <td>≈ 50 MB a day (≈ 1.5 GB a month)</td>
+              <td>Heartbeats plus a check for server commands every 2 seconds, assuming about 1 KB of protocol overhead per request.</td>
+            </tr>
+            <tr>
+              <th scope="row">Tracking an object</th>
+              <td>≈ 5 KB/s (≈ 42 kbit/s) while it is in view</td>
+              <td>Ten telemetry packets of about 520 bytes per second, per object.</td>
+            </tr>
+            <tr>
+              <th scope="row">Clip upload</th>
+              <td>Roughly 5–25 MB per clip</td>
+              <td>10 seconds of 1080p, 60 fps H.264, sent only after a confirmed stereo match. Size depends strongly on sensor noise.</td>
+            </tr>
+            <tr>
+              <th scope="row">Online ADS-B feed</th>
+              <td>Varies with air traffic</td>
+              <td>Polled once a second if used. A local ADS-B receiver uses no internet bandwidth at all.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">
+        For most hosts this adds up to a few gigabytes a month or less, well within typical home broadband allowances.
+      </p>
+    </div>
+  </section>
+
+  <section id="setup" class="section anchor-section" aria-labelledby="setup-title">
+    <div class="wrap split split--wide-left">
+      <div>
+        <h2 id="setup-title">Setup overview</h2>
+        <p>
+          The step-by-step guide, configuration reference and troubleshooting live with the software in the
+          <a href={links.edgeReadme}>edge README</a>. In outline:
+        </p>
+        <ol class="steps">
+          <li>
+            <h3>Register and check spacing</h3>
+            <p>Use the interest form and the coverage map so your node has a partner 5–40 miles away.</p>
+          </li>
+          <li>
+            <h3>Install the operating system</h3>
+            <p>Flash NVIDIA JetPack 6.2 or later to the NVMe SSD, which also enables the Super power modes.</p>
+          </li>
+          <li>
+            <h3>Connect the camera</h3>
+            <p>Use a 22-pin cable and enable the camera connector with NVIDIA's <code>jetson-io</code> tool.</p>
+          </li>
+          <li>
+            <h3>Wire the GPS for time</h3>
+            <p>
+              Connect its serial output and PPS pin to the 40-pin header, then let gpsd and chrony keep the system clock
+              on GPS time.
+            </p>
+          </li>
+          <li>
+            <h3>Install the edge software</h3>
+            <p>Add an ADS-B source (a local receiver or an online feed) and the node ID and key the project issues.</p>
+          </li>
+          <li>
+            <h3>Calibrate</h3>
+            <p>
+              Calibrate the lens, solve the camera's pointing from the stars on a clear night, measure the capture delay
+              and draw the sky mask.
+            </p>
+          </li>
+          <li>
+            <h3>Mount and verify</h3>
+            <p>Mount the node outdoors and confirm it appears, online, on the live map.</p>
+          </li>
+        </ol>
+        <p><a class="btn btn-secondary" href={links.edgeReadme}>Read the edge setup guide</a></p>
+      </div>
+      <aside class="card" aria-labelledby="dontneed-title">
+        <h3 id="dontneed-title">What you don't need</h3>
+        <ul>
+          <li>A telescope or astronomy experience.</li>
+          <li>A static IP address or open inbound ports. The node connects out to the server.</li>
+          <li>A fast connection: a few gigabytes a month is typical.</li>
+          <li>To watch anything. The node works unattended; you can see its status on the map.</li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <section id="coverage" class="section anchor-section" aria-labelledby="cov-title">
+    <div class="wrap split">
+      <div class="prose">
+        <h2 id="cov-title">Where nodes are needed</h2>
+        <p>
+          The coverage layer of the live map divides the region into cells and evaluates the sky above each one, at
+          3 km altitude by default:
+        </p>
+        <ul>
+          <li><strong>Stereo</strong>: at least two nodes see it with enough parallax to triangulate.</li>
+          <li><strong>Mono</strong>: only one node sees it, so objects there can be detected but not located.</li>
+          <li><strong>Blind</strong>: no node sees it.</li>
+        </ul>
+        <p>
+          It also suggests up to ten places where one new, upward-pointing node would turn the most blind or mono cells
+          into stereo coverage. Those are the best places to host.
+        </p>
+        <p><a class="btn btn-primary" href={links.coverageMap}>Open the coverage map</a></p>
+      </div>
+      <div class="coverage-legend" aria-hidden="true">
+        <div class="cov-grid">
+          {
+            Array.from({ length: 48 }, (_, i) => {
+              const x = i % 8;
+              const y = Math.floor(i / 8);
+              const d = Math.hypot(x - 3.2, y - 2.4);
+              const cls = d < 1.8 ? "s" : d < 3.1 ? "m" : "b";
+              return <span class={`cell ${cls}`} />;
+            })
+          }
+        </div>
+        <ul class="cov-key">
+          <li><span class="cell s"></span> stereo</li>
+          <li><span class="cell m"></span> mono</li>
+          <li><span class="cell b"></span> blind</li>
+        </ul>
+        <p class="small muted cov-note">Illustration only, not real coverage data.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="placement" class="section anchor-section" aria-labelledby="place-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="place-title">Placement tips</h2>
+      </div>
+      <div class="grid grid-2">
+        <article class="card">
+          <h3>Point it at the sky, not the neighbours</h3>
+          <p>
+            Aim the camera steeply upward. Use the sky mask for any rooftop, tree or horizon still in frame. Detection
+            ignores masked areas, but a requested clip contains the full camera frame, so the less of the ground it
+            sees, the better.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Keep it rigid</h3>
+          <p>
+            Pointing is the largest source of error. A camera that sags or is knocked sends wrong directions until it
+            is recalibrated, so use a stiff mount and let the orientation sensor, if fitted, warn you of movement.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Mind heat and dew</h3>
+          <p>
+            A sealed box in the sun gets hot, and a clear dome fogs on cool nights. Shade, ventilation and a small dew
+            heater help keep the computer within limits and the view clear.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Be safe outdoors</h3>
+          <p>
+            Use outdoor-rated power with GFCI/RCD protection, keep roof work safe and follow local electrical rules.
+            If in doubt, ask a qualified electrician.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .parts {
+    min-width: 860px;
+  }
+
+  .parts td.note {
+    color: var(--text-2);
+    font-size: 0.9rem;
+    min-width: 280px;
+  }
+
+  .parts tbody th {
+    white-space: nowrap;
+  }
+
+  .parts .badge {
+    margin-top: 6px;
+  }
+
+  .figures {
+    display: grid;
+    gap: 12px;
+    margin: 0;
+  }
+
+  .figures div {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 16px 20px;
+  }
+
+  .figures dt {
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+
+  .figures dd {
+    margin: 0;
+    font-size: clamp(1.5rem, 1.2rem + 1.2vw, 2rem);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .coverage-legend {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px;
+  }
+
+  .cov-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 3px;
+    margin-bottom: 16px;
+  }
+
+  .cell {
+    display: inline-block;
+    aspect-ratio: 1;
+    border-radius: 3px;
+    min-width: 14px;
+  }
+
+  .cell.s {
+    background: #5cb8ff;
+  }
+
+  .cell.m {
+    background: #2f5f8f;
+  }
+
+  .cell.b {
+    background: #1a2438;
+  }
+
+  .cov-key {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    gap: 18px;
+    color: var(--text-2);
+    font-size: 0.9rem;
+  }
+
+  .cov-key li {
+    margin: 0;
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .cov-key .cell {
+    width: 14px;
+  }
+
+  .cov-note {
+    margin: 12px 0 0;
+  }
+</style>

@@ -1,0 +1,106 @@
+---
+import Base from "../layouts/Base.astro";
+import VolunteerForm from "../components/VolunteerForm.astro";
+import { links } from "../config";
+
+const description =
+  "Register interest in hosting a UAP Finder node, contribute code to the open-source edge, server, map and website, or help analyse the public data.";
+---
+<Base title="Get involved" description={description}>
+  <header class="page-hero">
+    <div class="wrap">
+      <p class="eyebrow">Get involved</p>
+      <h1>Help measure the sky</h1>
+      <p class="lead">
+        Host a node, write code, check the data or help find hosts where coverage is thin. Start by telling us roughly
+        where you are and what you'd like to do.
+      </p>
+    </div>
+  </header>
+
+  <section id="signup" class="section anchor-section" aria-labelledby="signup-title">
+    <div class="wrap signup-layout">
+      <div class="signup-intro">
+        <h2 id="signup-title">Register your interest</h2>
+        <p id="signup-intro">
+          This helps us see where volunteers are, match prospective hosts with partners 5–40 miles away, and contact you
+          when your area is ready. It takes about a minute.
+        </p>
+        <ul class="checklist checklist--yes small">
+          <li>Approximate location only. We never ask for a street address.</li>
+          <li>Publicly, volunteers are only ever shown as counts per 1° × 1° area, and only where there are at least 3.</li>
+          <li>Submitting again with the same email updates your entry.</li>
+        </ul>
+        <p class="small"><a href="/privacy/">Read the privacy notice</a> for what we store, who can see it and how to delete it.</p>
+      </div>
+      <VolunteerForm />
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="other-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="other-title">Other ways to help</h2>
+        <p>Everything is open source and developed in public.</p>
+      </div>
+      <div class="grid grid-3">
+        <article class="card" id="code">
+          <h3>Contribute code</h3>
+          <p>The project has four parts, each with its own tests:</p>
+          <ul class="small">
+            <li><a href={links.edgeReadme}>Edge</a>: Python on the Jetson; capture, detection, filters, clips.</li>
+            <li><a href={links.serverCode}>Server</a>: Python; matching, triangulation, tracks, API.</li>
+            <li><a href={links.dashboardCode}>Map</a>: TypeScript and CesiumJS.</li>
+            <li><a href={links.siteCode}>Website</a>: this site, built with Astro.</li>
+          </ul>
+          <p><a class="arrow-link" href={links.repo}>Browse the repository</a></p>
+        </article>
+        <article class="card" id="analysis">
+          <h3>Help analyse data</h3>
+          <p>
+            Tracks, sight lines, coverage and clips are available from the public, read-only
+            <a href={links.apiDoc}>API</a>. Useful work includes:
+          </p>
+          <ul class="small">
+            <li>Checking tracks against flight, satellite and balloon records.</li>
+            <li>Auditing the on-device filters for things they miss or wrongly remove.</li>
+            <li>Improving the <a href={links.mathDoc}>error model</a>, for example atmospheric refraction.</li>
+          </ul>
+        </article>
+        <article class="card" id="outreach">
+          <h3>Outreach</h3>
+          <p>
+            Coverage depends on hosts in the right places. Rural landowners, astronomy clubs, schools and makerspaces
+            are natural partners. Point them to this site and the <a href={links.coverageMap}>coverage map</a>, and
+            please describe the project accurately: it measures, it doesn't claim.
+          </p>
+          <p><a class="arrow-link" href={links.issues}>Discuss ideas in the issue tracker</a></p>
+        </article>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .signup-layout {
+    display: grid;
+    gap: clamp(28px, 5vw, 56px);
+    align-items: start;
+  }
+
+  @media (min-width: 980px) {
+    .signup-layout {
+      grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.4fr);
+    }
+
+    .signup-intro {
+      position: sticky;
+      top: 96px;
+    }
+  }
+
+  .signup-intro .checklist {
+    color: var(--text-2);
+    margin-top: 18px;
+  }
+</style>
