@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Node
+node_modules/
+dashboard/dist/
+.vite/
+
+# Vercel
+.vercel/
+
+# Local data and secrets
+*.env
+.env*
+!.env.example
+data/
+clips/
+*.y4m
+*.mp4
