@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skynet-edge"
+version = "0.1.0"
+description = "SKY-NET edge node: sky camera capture, detection, tracking and uplink for Jetson Orin Nano"
+readme = "README.md"
+requires-python = ">=3.10"
+# OpenCV is deliberately not a hard dependency: on a Jetson the JetPack
+# OpenCV (built with GStreamer, visible through a --system-site-packages
+# venv) must be used, and a pip opencv wheel would shadow it. Install the
+# `opencv` extra on development machines.
+dependencies = [
+    "skynet-common>=0.1.0",
+    "numpy>=1.24",
+    "PyYAML>=5.4",
+    "requests>=2.25",
+]
+
+[project.optional-dependencies]
+opencv = ["opencv-python-headless>=4.8,<5"]
+serial = ["pyserial>=3.5"]
+imu = ["smbus2>=0.4"]
+cuda = ["cupy-cuda12x>=13"]
+test = ["pytest>=8", "opencv-python-headless>=4.8,<5", "pyserial>=3.5", "smbus2>=0.4"]
+
+[project.scripts]
+skynet-edge = "skynet_edge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["skynet_edge*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
