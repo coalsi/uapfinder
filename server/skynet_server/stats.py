@@ -13,6 +13,7 @@ buckets and a sample of latencies in Redis.
 
 from __future__ import annotations
 
+import random
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -73,21 +74,26 @@ class Stats:
     """Process-local statistics; also the accumulator for shared (Redis) stats.
 
     ``shared=True`` keeps a delta of everything recorded since the last
-    ``drain`` for the state backend to aggregate. Without it nothing is
-    accumulated, so a long-running standalone process does not grow.
+    ``drain`` for the state backend to aggregate, at most every
+    ``flush_interval_s`` (0: every batch, as a Vercel invocation must).
+    Latency samples in a delta are a uniform reservoir sample. Without
+    ``shared`` nothing is accumulated, so a long-running process does not grow.
     """
 
-    _MAX_DELTA_SAMPLES = 256
+    _MAX_DELTA_SAMPLES = 64
 
-    def __init__(self, shared: bool = False) -> None:
+    def __init__(self, shared: bool = False, flush_interval_s: float = 0.0) -> None:
         self.started = time.time()
         self.shared = shared
+        self.flush_interval_s = flush_interval_s
         self.counters: Counter = Counter()
         self.rejected: Counter = Counter()
         self.processing = LatencyRing()
         self.backsignal = LatencyRing()
         self._buckets: Dict[int, Counter] = {}
         self._delta = StatsDelta()
+        self._seen = [0, 0]  # samples offered to the processing / back-signal reservoirs
+        self._last_drain = time.monotonic()
 
     def count(self, name: str, n: int = 1) -> None:
         if not n:
@@ -115,18 +121,32 @@ class Stats:
         if self.shared:
             self._delta.rejected[reason] += n
 
+    def _sample(self, which: int, samples: List[float], ms: float) -> None:
+        self._seen[which] += 1
+        if len(samples) < self._MAX_DELTA_SAMPLES:
+            samples.append(ms)
+        else:
+            j = random.randrange(self._seen[which])
+            if j < self._MAX_DELTA_SAMPLES:
+                samples[j] = ms
+
     def processing_ms(self, ms: float) -> None:
         self.processing.add(ms)
-        if self.shared and len(self._delta.processing_ms) < self._MAX_DELTA_SAMPLES:
-            self._delta.processing_ms.append(ms)
+        if self.shared:
+            self._sample(0, self._delta.processing_ms, ms)
 
     def backsignal_ms(self, ms: float) -> None:
         self.backsignal.add(ms)
-        if self.shared and len(self._delta.backsignal_ms) < self._MAX_DELTA_SAMPLES:
-            self._delta.backsignal_ms.append(ms)
+        if self.shared:
+            self._sample(1, self._delta.backsignal_ms, ms)
+
+    def drain_due(self) -> bool:
+        return self.shared and time.monotonic() - self._last_drain >= self.flush_interval_s
 
     def drain(self) -> StatsDelta:
         delta, self._delta = self._delta, StatsDelta()
+        self._seen = [0, 0]
+        self._last_drain = time.monotonic()
         return delta
 
     def rate(self, name: str, now: Optional[float] = None) -> float:

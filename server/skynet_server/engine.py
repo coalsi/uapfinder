@@ -22,9 +22,11 @@ from __future__ import annotations
 
 import logging
 import secrets
+import socket
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Sequence, Set, Tuple
+from urllib.parse import urlsplit
 
 from skynet_common.geodesy import azel_to_ecef_unit, geodetic_to_ecef
 from skynet_common.protocol import Heartbeat, ProtocolError, Telemetry, encode_signed
@@ -42,6 +44,11 @@ from .tracks import TrackManager, TrackUpdate
 log = logging.getLogger("skynet.engine")
 
 PAIR_PREFIX = "p:"
+
+
+def is_local_host(host: Optional[str]) -> bool:
+    """Loopback, unspecified or empty host names, which a remote node cannot use."""
+    return not host or host in ("localhost", "0.0.0.0", "::", "::1") or host.startswith("127.")
 _UDP_SHARE_REFRESH_NS = 20_000_000_000
 
 
@@ -93,11 +100,27 @@ class Engine:
     # --- helpers -------------------------------------------------------------
 
     def base_url(self, request_base: Optional[str] = None) -> str:
+        """Base URL nodes use to reach this server's HTTP API (clip uploads).
+
+        ``SKYNET_PUBLIC_URL`` when set; otherwise the URL of the HTTP request
+        being served, unless that names a loopback or unspecified address;
+        otherwise this machine's host name and HTTP port (on a tailnet,
+        MagicDNS resolves the bare host name). A remote node is never sent
+        a loopback or 0.0.0.0 URL.
+        """
         if self.settings.public_url:
             return self.settings.public_url
-        if request_base:
+        if request_base and not is_local_host(urlsplit(request_base).hostname):
             return request_base.rstrip("/")
-        host = self.settings.http_host if self.settings.http_host not in ("0.0.0.0", "::", "") else "127.0.0.1"
+        return self._fallback_base
+
+    @property
+    def _fallback_base(self) -> str:
+        host = self.settings.http_host
+        if is_local_host(host) and not host.startswith("127.") and host != "::1":
+            host = socket.gethostname()  # bound to all interfaces: name the machine, not 0.0.0.0
+        if ":" in host:
+            host = f"[{host}]"
         return f"http://{host}:{self.settings.http_port}"
 
     def public_node(self, node: NodeRecord, now_ns: Optional[int] = None) -> Dict[str, Any]:
@@ -183,7 +206,7 @@ class Engine:
         if outgoing:
             udp_sends, queued_perf = await self._route_clip_requests(outgoing, commit, db, now_ns)
 
-        stats_delta = st.drain() if st.shared else None
+        stats_delta = st.drain() if st.drain_due() else None
         if not commit.is_empty() or (stats_delta is not None and not stats_delta.is_empty()):
             stored = await self.state.commit(commit, self.settings.tracks.link_ttl_ms, stats_delta)
             self.hub.publish(stored)
@@ -328,6 +351,7 @@ class Engine:
             if not upd.recorded:
                 self.stats.count("matches_refinement_skipped")
                 continue
+            self.matchmaker.note_recorded(m)
             node_ids = [r.node_id for r in m.rays]
             data = {
                 "event_id": event_id,
@@ -340,7 +364,7 @@ class Engine:
                 "error_margin_m": round(m.error_margin_m, 2),
                 "parallax_deg": round(m.parallax_deg, 3),
                 "rays": [
-                    {"node_id": r.node_id, "az_deg": round(r.az_deg, 4), "el_deg": round(r.el_deg, 4),
+                    {"node_id": r.node_id, "az_deg": round(r.azel()[0], 4), "el_deg": round(r.azel()[1], 4),
                      "node_lat": round(r.lat, decimals), "node_lon": round(r.lon, decimals),
                      "node_alt_m": round(r.alt_m, 1)}
                     for r in m.rays
@@ -354,8 +378,8 @@ class Engine:
                     **data,
                     "node_ids": node_ids,
                     # Full-precision rays for the durable record.
-                    "rays": [{"node_id": r.node_id, "seq": r.seq, "track_id": r.track_id, "az_deg": r.az_deg,
-                              "el_deg": r.el_deg, "lat": r.lat, "lon": r.lon, "alt_m": r.alt_m,
+                    "rays": [{"node_id": r.node_id, "seq": r.seq, "track_id": r.track_id, "az_deg": r.azel()[0],
+                              "el_deg": r.azel()[1], "lat": r.lat, "lon": r.lon, "alt_m": r.alt_m,
                               "interpolated": r.interpolated} for r in m.rays],
                 })
         for track in track_events.values():

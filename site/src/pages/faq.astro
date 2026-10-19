@@ -54,7 +54,7 @@ const items: Item[] = [
   {
     id: "accuracy",
     q: "How accurate is it?",
-    a: `<p>It depends mostly on how precisely each camera's pointing is known and on the geometry. With star-calibrated cameras (about 0.05° pointing error), the error model predicts a 3D position error of roughly <strong>20–30 m</strong> for an object at 10 km altitude seen by nodes 5–20 miles apart, about 80 m at 40 miles, and several hundred metres at 80 miles, where the object is low on both horizons. With uncalibrated pointing (about 1°) errors grow to hundreds of metres.</p>
+    a: `<p>It depends mostly on how precisely each camera's pointing is known and on the geometry. With star-calibrated cameras (about 0.05° pointing error), the error model predicts a 3D position error of roughly <strong>20–30 m</strong> for an object at 10 km altitude seen by nodes 5–20 miles apart, about 80 m at 40 miles, and about 270 m at 80 miles, where the object is only 8° above both horizons. With uncalibrated pointing (about 1°) errors grow to hundreds of metres.</p>
 <p>Every published position carries its own estimate (<code>sigma_m</code>). These figures are model predictions checked in simulation and not yet verified in the field. Details are on <a href="/how-it-works/#accuracy">How it works</a>.</p>`,
   },
   {
@@ -116,7 +116,8 @@ const jsonLd = {
   </header>
 
   <div class="section">
-    <div class="wrap faq">
+    <div class="wrap">
+      <div class="faq">
       {
         items.map((i) => (
           <section id={i.id} class="faq-item anchor-section" aria-labelledby={`${i.id}-q`}>
@@ -125,13 +126,14 @@ const jsonLd = {
           </section>
         ))
       }
+      </div>
     </div>
   </div>
 </Base>
 
 <style>
   .faq {
-    max-width: calc(var(--prose) + 2 * var(--gutter));
+    max-width: 76ch;
     display: grid;
     gap: 16px;
   }

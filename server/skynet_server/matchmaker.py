@@ -41,12 +41,13 @@ import math
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
 
-from skynet_common.geodesy import Vec3, angle_between_deg, ecef_to_enu_vector, enu_to_azel
+from skynet_common.geodesy import Vec3, angle_between_deg
 from skynet_common.triangulation import Ray, gate, triangulate_rays
 
 from .config import MatchConfig
 from .fastmath import fast_gate, position_sigma_m, triangulate_many_fast
 from .models import Detection, Match, RayObs
+from .tracks import REFINE_RATIO, SAME_FRAME_NS
 
 # (origin, direction, before, after, weight): ``after`` is None for a raw sample.
 Candidate = Tuple[Vec3, Vec3, Detection, Optional[Detection], float]
@@ -56,60 +57,124 @@ _PARTNER_TTL_NS = 3_000_000_000
 _CACHE_SWEEP_EVERY = 20_000
 
 
-class DetectionSource(Protocol):
-    def window(self, node_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
-        """Detections of ``node_id`` with lo_ns <= t_ns <= hi_ns, oldest first."""
+#: One local track's samples: (timestamps, detections), both oldest first.
+TrackSamples = Tuple[List[int], List[Detection]]
 
-    def track_window(self, node_id: str, track_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
-        """The same, restricted to one local track."""
+
+class DetectionSource(Protocol):
+    """Recent detections of other nodes, as the matchmaker reads them."""
+
+    def local_track(self, node_id: str, track_id: str) -> Optional[TrackSamples]:
+        """Samples of one local track of a node, if any."""
+
+    def local_tracks(self, node_id: str) -> Iterable[TrackSamples]:
+        """Samples of every local track of a node."""
+
+    def untracked(self, node_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
+        """Detections without a local track id with lo_ns <= t_ns <= hi_ns."""
+
+
+class NodeSamples:
+    """One node's recent detections, grouped by local track, each group
+    time-sorted. ``cutoff_ns`` trims samples older than the retention."""
+
+    __slots__ = ("tracks", "loose", "newest_ns")
+
+    def __init__(self) -> None:
+        self.tracks: Dict[str, TrackSamples] = {}
+        self.loose: TrackSamples = ([], [])  # detections without a track id
+        self.newest_ns = 0
+
+    def add(self, d: Detection, cutoff_ns: int) -> None:
+        if d.track_id is None:
+            entry = self.loose
+        else:
+            entry = self.tracks.get(d.track_id)  # type: ignore[assignment]
+            if entry is None:
+                entry = self.tracks[d.track_id] = ([], [])
+        ts, dets = entry
+        if not ts or d.t_ns >= ts[-1]:
+            ts.append(d.t_ns)
+            dets.append(d)
+        else:
+            i = bisect.bisect_right(ts, d.t_ns)
+            if i and ts[i - 1] == d.t_ns and dets[i - 1].seq == d.seq:
+                return  # the same detection fetched twice
+            ts.insert(i, d.t_ns)
+            dets.insert(i, d)
+        if ts[0] < cutoff_ns:
+            cut = bisect.bisect_left(ts, cutoff_ns)
+            del ts[:cut]
+            del dets[:cut]
+        if d.t_ns > self.newest_ns:
+            self.newest_ns = d.t_ns
+
+    def prune(self, cutoff_ns: int) -> None:
+        """Drop local tracks whose newest sample is older than ``cutoff_ns``."""
+        for tid in [t for t, (ts, _) in self.tracks.items() if ts[-1] < cutoff_ns]:
+            del self.tracks[tid]
+        ts, dets = self.loose
+        if ts and ts[0] < cutoff_ns:
+            cut = bisect.bisect_left(ts, cutoff_ns)
+            del ts[:cut]
+            del dets[:cut]
+
+    def untracked(self, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
+        ts, dets = self.loose
+        if not ts:
+            return ()
+        return dets[bisect.bisect_left(ts, lo_ns) : bisect.bisect_right(ts, hi_ns)]
 
 
 class Prefetched:
-    """A DetectionSource over detections fetched in one batch (Redis backend)."""
+    """A DetectionSource over detections fetched for one batch (Redis backend)."""
 
-    __slots__ = ("_ts", "_dets", "fetched")
+    __slots__ = ("nodes", "fetched")
 
     def __init__(self) -> None:
-        self._ts: Dict[str, List[int]] = {}
-        self._dets: Dict[str, List[Detection]] = {}
+        self.nodes: Dict[str, NodeSamples] = {}
         self.fetched: Dict[str, Window] = {}
 
-    def add(self, node_id: str, window: Window, dets: List[Detection]) -> None:
+    def add(self, node_id: str, window: Window, dets: Iterable[Detection]) -> None:
         """Add a node's detections for ``window`` (merged with earlier fetches)."""
-        old = self._dets.get(node_id)
-        if old:
-            merged = {(d.t_ns, d.seq): d for d in old}
-            merged.update(((d.t_ns, d.seq), d) for d in dets)
-            dets = sorted(merged.values(), key=lambda d: d.t_ns)
-            prev = self.fetched[node_id]
-            window = (min(prev[0], window[0]), max(prev[1], window[1]))
-        self._dets[node_id] = dets
-        self._ts[node_id] = [d.t_ns for d in dets]
-        self.fetched[node_id] = window
+        ns = self.nodes.get(node_id)
+        if ns is None:
+            ns = self.nodes[node_id] = NodeSamples()
+        for d in dets:
+            ns.add(d, 0)
+        prev = self.fetched.get(node_id)
+        self.fetched[node_id] = window if prev is None else (min(prev[0], window[0]), max(prev[1], window[1]))
 
     def missing(self, windows: Dict[str, Window]) -> Dict[str, Window]:
-        """The subset of ``windows`` not already covered by earlier fetches."""
+        """The parts of ``windows`` not covered by earlier fetches (as one
+        covering window per node)."""
         out = {}
         for node_id, (lo, hi) in windows.items():
             have = self.fetched.get(node_id)
-            if have is None or lo < have[0] or hi > have[1]:
-                out[node_id] = (lo, hi) if have is None else (min(lo, have[0]), max(hi, have[1]))
+            if have is None:
+                out[node_id] = (lo, hi)
+            elif lo < have[0] or hi > have[1]:
+                out[node_id] = (min(lo, have[0]), max(hi, have[1]))
         return out
 
-    def window(self, node_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
-        ts = self._ts.get(node_id)
-        if not ts:
-            return ()
-        return self._dets[node_id][bisect.bisect_left(ts, lo_ns) : bisect.bisect_right(ts, hi_ns)]
+    def local_track(self, node_id: str, track_id: str) -> Optional[TrackSamples]:
+        ns = self.nodes.get(node_id)
+        return ns.tracks.get(track_id) if ns is not None else None
 
-    def track_window(self, node_id: str, track_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
-        return [d for d in self.window(node_id, lo_ns, hi_ns) if d.track_id == track_id]
+    def local_tracks(self, node_id: str) -> Iterable[TrackSamples]:
+        ns = self.nodes.get(node_id)
+        return ns.tracks.values() if ns is not None else ()
+
+    def untracked(self, node_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
+        ns = self.nodes.get(node_id)
+        return ns.untracked(lo_ns, hi_ns) if ns is not None else ()
 
 
 @dataclass(slots=True)
 class Plan:
     """How one packet will be searched: ``guide`` maps partner node -> its
-    local track (guided search) or is None (full search over ``neighbours``)."""
+    local track (guided search) or is None (full search over ``neighbours``).
+    ``windows`` tells prefetching backends what to fetch for it."""
 
     detection: Detection
     neighbours: Sequence[str]
@@ -136,16 +201,14 @@ def ray_of(d: Detection) -> RayObs:
 
 
 def candidate_ray(c: Candidate) -> RayObs:
-    """Materialise a candidate as a RayObs (az/el recomputed if interpolated)."""
+    """Materialise a candidate as a RayObs (az/el derived lazily if interpolated)."""
     origin, direction, before, after, w = c
     if after is None:
         return ray_of(before)
-    lat = before.lat + (after.lat - before.lat) * w
-    lon = before.lon + (after.lon - before.lon) * w
-    az, el = enu_to_azel(*ecef_to_enu_vector(lat, lon, direction))
     nearest = before if w <= 0.5 else after
-    return RayObs(before.node_id, nearest.seq, before.track_id, lat, lon,
-                  before.alt_m + (after.alt_m - before.alt_m) * w, az, el, origin, direction, interpolated=True)
+    return RayObs(before.node_id, nearest.seq, before.track_id, before.lat + (after.lat - before.lat) * w,
+                  before.lon + (after.lon - before.lon) * w, before.alt_m + (after.alt_m - before.alt_m) * w,
+                  None, None, origin, direction, interpolated=True)
 
 
 class _Partners:
@@ -168,10 +231,14 @@ class Matchmaker:
         self.full_search_interval_ns = full_search_interval_ns
         self.miss_backoff_ns = miss_backoff_ns
         self._partners: Dict[Tuple[str, str], _Partners] = {}
+        # local track -> (t_ns, ECEF point, sigma_m) of the latest recorded
+        # solution it took part in (see ``note_recorded``).
+        self._frames: Dict[Tuple[str, str], Tuple[int, Vec3, float]] = {}
         self._calls = 0
         self.full_searches = 0
         self.guided_searches = 0
         self.skipped = 0
+        self.refinements_skipped = 0
 
     # --- planning ----------------------------------------------------------------
 
@@ -213,48 +280,44 @@ class Matchmaker:
 
     # --- candidates ----------------------------------------------------------------
 
-    def candidates(self, t_ns: int, dets: Sequence[Detection]) -> List[Candidate]:
-        """Candidate lines of sight of one neighbour at time ``t_ns``.
+    def track_candidate(self, t_ns: int, samples: TrackSamples) -> Optional[Candidate]:
+        """One local track's line of sight at ``t_ns``: the exact sample, the
+        interpolation between the samples bracketing ``t_ns`` (if they are at
+        most ``interp_max_gap`` apart), or the nearest sample within
+        ``window``; None if there is no usable sample."""
+        ts, dets = samples
+        i = bisect.bisect_right(ts, t_ns)
+        before = dets[i - 1] if i else None
+        if before is not None and before.t_ns == t_ns:
+            return (before.origin, before.direction, before, None, 0.0)
+        after = dets[i] if i < len(dets) else None
+        if before is not None and after is not None and after.t_ns - before.t_ns <= self.cfg.interp_max_gap_ns:
+            w = (t_ns - before.t_ns) / (after.t_ns - before.t_ns)
+            a, b = before.direction, after.direction
+            dx, dy, dz = a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, a[2] + (b[2] - a[2]) * w
+            n = math.sqrt(dx * dx + dy * dy + dz * dz)
+            oa, ob = before.origin, after.origin
+            origin = (oa[0] + (ob[0] - oa[0]) * w, oa[1] + (ob[1] - oa[1]) * w, oa[2] + (ob[2] - oa[2]) * w)
+            return (origin, (dx / n, dy / n, dz / n), before, after, w)
+        window = self.cfg.window_ns
+        db = t_ns - before.t_ns if before is not None else window + 1
+        da = after.t_ns - t_ns if after is not None else window + 1
+        if db <= window and db <= da:
+            return (before.origin, before.direction, before, None, 0.0)  # type: ignore[union-attr]
+        if da <= window:
+            return (after.origin, after.direction, after, None, 0.0)  # type: ignore[union-attr]
+        return None
 
-        ``dets`` are that neighbour's detections (oldest first), possibly
-        already restricted to one local track.
-        """
-        window, gap = self.cfg.window_ns, self.cfg.interp_max_gap_ns
-        out: List[Candidate] = []
-        brackets: Dict[str, List[Optional[Detection]]] = {}
-        for x in dets:
-            tid = x.track_id
-            if tid is None:
-                if -window <= x.t_ns - t_ns <= window:
-                    out.append((x.origin, x.direction, x, None, 0.0))
-                continue
-            entry = brackets.get(tid)
-            if entry is None:
-                entry = brackets[tid] = [None, None]
-            if x.t_ns <= t_ns:
-                entry[0] = x
-            elif entry[1] is None:
-                entry[1] = x
-        for before, after in brackets.values():
-            if before is not None and before.t_ns == t_ns:
-                out.append((before.origin, before.direction, before, None, 0.0))
-                continue
-            if before is not None and after is not None and after.t_ns - before.t_ns <= gap:
-                w = (t_ns - before.t_ns) / (after.t_ns - before.t_ns)
-                a, b = before.direction, after.direction
-                dx, dy, dz = a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, a[2] + (b[2] - a[2]) * w
-                n = math.sqrt(dx * dx + dy * dy + dz * dz)
-                oa, ob = before.origin, after.origin
-                origin = (oa[0] + (ob[0] - oa[0]) * w, oa[1] + (ob[1] - oa[1]) * w, oa[2] + (ob[2] - oa[2]) * w)
-                out.append((origin, (dx / n, dy / n, dz / n), before, after, w))
-                continue
-            nearest = None
-            for x in (before, after):
-                if x is not None and abs(x.t_ns - t_ns) <= window:
-                    if nearest is None or abs(x.t_ns - t_ns) < abs(nearest.t_ns - t_ns):
-                        nearest = x
-            if nearest is not None:
-                out.append((nearest.origin, nearest.direction, nearest, None, 0.0))
+    def candidates(self, t_ns: int, node_id: str, source: DetectionSource) -> List[Candidate]:
+        """Every candidate line of sight of one node at time ``t_ns``."""
+        out = []
+        for samples in source.local_tracks(node_id):
+            c = self.track_candidate(t_ns, samples)
+            if c is not None:
+                out.append(c)
+        window = self.cfg.window_ns
+        for x in source.untracked(node_id, t_ns - window, t_ns + window):
+            out.append((x.origin, x.direction, x, None, 0.0))
         return out
 
     def _best_for(self, d: Detection, cands: List[Candidate]) -> Optional[Tuple[float, Candidate]]:
@@ -274,31 +337,32 @@ class Matchmaker:
         without side effects; when ``plan.retry`` is then set, the caller
         should search again with ``plan.as_full()``."""
         d = plan.detection
-        span = self.span_ns
-        lo, hi = d.t_ns - span, d.t_ns + span
+        t = d.t_ns
         best: List[Tuple[float, Candidate]] = []
+        sigma, g = self.sigma_rad, self.gate_cfg
         if plan.guide is not None:
             self.guided_searches += 1
             heard = rejected = False
             for nb, tid in plan.guide.items():
-                dets = source.track_window(nb, tid, lo, hi)
-                if dets:
-                    heard = True
-                    cands = self.candidates(d.t_ns, dets)
-                    top = self._best_for(d, cands)
-                    if top is not None:
-                        best.append(top)
-                    elif cands:
-                        rejected = True
+                samples = source.local_track(nb, tid)
+                if samples is None or t - samples[0][-1] > self.span_ns:
+                    continue  # the partner has not reported this track recently
+                heard = True
+                cand = self.track_candidate(t, samples)
+                if cand is None:
+                    continue  # not reported for this frame yet
+                nmiss = fast_gate(d.origin, d.direction, cand[0], cand[1], sigma, g)
+                if nmiss is None:
+                    rejected = True
+                else:
+                    best.append((nmiss, cand))
             plan.retry = not best and (rejected or not heard)
         else:
             self.full_searches += 1
             for nb in plan.neighbours:
-                dets = source.window(nb, lo, hi)
-                if dets:
-                    top = self._best_for(d, self.candidates(d.t_ns, dets))
-                    if top is not None:
-                        best.append(top)
+                top = self._best_for(d, self.candidates(t, nb, source))
+                if top is not None:
+                    best.append(top)
             if d.track_id is not None:
                 p = self._partner_entry(d.node_id, d.track_id)
                 p.full_ns = d.t_ns
@@ -308,6 +372,11 @@ class Matchmaker:
             return None
         best.sort(key=lambda item: item[0])
         del best[self.cfg.max_rays - 1 :]
+        agreed = self._predictably_redundant(d, best)
+        if agreed is not None:
+            self.refinements_skipped += 1
+            self._learn_tracks(d, agreed, t)
+            return None
         me = ray_of(d)
         result = None
         if len(best) >= 2:
@@ -341,6 +410,65 @@ class Matchmaker:
             )
         return None
 
+    def note_recorded(self, m: Match) -> None:
+        """Remember a solution that was kept as a track point (engine callback)."""
+        entry = (m.t_ns, m.point, m.sigma_m)
+        for r in m.rays:
+            if r.track_id is not None:
+                self._frames[(r.node_id, r.track_id)] = entry
+
+    def _predictably_redundant(self, d: Detection, best: List[Tuple[float, Candidate]]) -> Optional[List[Detection]]:
+        """Would solving this packet only produce a same-frame refinement that
+        the track manager discards (``TrackManager.redundant``)?
+
+        Applies when a partner already took part in a recorded solution of
+        this frame and the packet's own ray passes within the noise bound of
+        that solution's point. The new sigma is then predicted from the
+        closed-form covariance at that point, which costs a fraction of the
+        least-squares solve; the track manager still applies the exact rule
+        to whatever is solved. Returns the partners that took part in the
+        reference solution (safe to learn from) when the solve can be
+        skipped, else None.
+        """
+        ref: Optional[Tuple[int, Vec3, float]] = None
+        for _, cand in best:
+            before = cand[2]
+            if before.track_id is None:
+                continue
+            f = self._frames.get((before.node_id, before.track_id))
+            if f is not None and abs(f[0] - d.t_ns) < SAME_FRAME_NS and (ref is None or f[2] < ref[2]):
+                ref = f
+        if ref is None:
+            return None
+        g = self.gate_cfg
+        px, py, pz = ref[1]
+        ox, oy, oz = d.origin
+        vx, vy, vz = d.direction
+        ex, ey, ez = px - ox, py - oy, pz - oz
+        rng = ex * vx + ey * vy + ez * vz
+        perp = math.sqrt(max(ex * ex + ey * ey + ez * ez - rng * rng, 0.0))
+        if rng <= 0.0 or perp > g.k_sigma * rng * self.sigma_rad + g.miss_floor_m:
+            return None  # this ray does not agree with the frame's solution: solve properly
+        dirs = [d.direction]
+        ranges = [rng]
+        for _, (o, v, _, _, _) in best:
+            dirs.append(v)
+            ranges.append(math.sqrt((px - o[0]) ** 2 + (py - o[1]) ** 2 + (pz - o[2]) ** 2))
+        if ref[2] > REFINE_RATIO * position_sigma_m(dirs, ranges, g.angular_sigma_deg):
+            return None
+        return [c[2] for _, c in best
+                if c[2].track_id is not None and self._frames.get((c[2].node_id, c[2].track_id)) == ref]
+
+    def _learn_tracks(self, d: Detection, others: Sequence[Detection], t_ns: int) -> None:
+        """``_learn`` for a packet whose solve was skipped."""
+        if d.track_id is None:
+            return
+        mine = self._partner_entry(d.node_id, d.track_id).by_node
+        for o in others:
+            if o.track_id is not None and o.node_id != d.node_id:
+                mine[o.node_id] = (o.track_id, t_ns)
+                self._partner_entry(o.node_id, o.track_id).by_node[d.node_id] = (d.track_id, t_ns)
+
     def _partner_entry(self, node_id: str, track_id: str) -> _Partners:
         p = self._partners.get((node_id, track_id))
         if p is None:
@@ -366,6 +494,8 @@ class Matchmaker:
                  if max(p.full_ns, p.miss_ns, max((t for _, t in p.by_node.values()), default=p.full_ns)) < horizon]
         for k in stale:
             del self._partners[k]
+        for k in [k for k, f in self._frames.items() if f[0] < horizon]:
+            del self._frames[k]
 
     def _solve_many(self, t_ns: int, me: RayObs, others: List[RayObs]) -> Optional[Match]:
         """Least-squares solution of all rays, dropping inconsistent ones.

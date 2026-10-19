@@ -171,6 +171,7 @@ const path = Astro.url.pathname.endsWith("/") ? Astro.url.pathname : `${Astro.ur
     stroke-width: 1.8;
     stroke-linecap: round;
     transition: transform 0.2s ease, opacity 0.2s ease;
+    transform-box: view-box;
     transform-origin: 11px 11px;
   }
 
@@ -210,13 +211,13 @@ const path = Astro.url.pathname.endsWith("/") ? Astro.url.pathname : `${Astro.ur
     }
 
     .nav-open .bar-1 {
-      transform: translateY(5px) rotate(45deg);
+      transform: rotate(45deg) translateY(5px);
     }
     .nav-open .bar-2 {
       opacity: 0;
     }
     .nav-open .bar-3 {
-      transform: translateY(-5px) rotate(-45deg);
+      transform: rotate(-45deg) translateY(-5px);
     }
   }
 </style>

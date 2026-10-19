@@ -163,6 +163,17 @@ SELECT * FROM unnest($1::text[], $2::bigint[], $3::bigint[], $4::text[], $5::flo
 ON CONFLICT DO NOTHING
 """
 
+_VOLUNTEER_FIELDS = ("email", "name", "country", "region", "city", "postal_code", "approx_lat", "approx_lon",
+                     "site_type", "has_hardware", "interests", "notes", "consent")
+
+_UPSERT_VOLUNTEER = f"""
+INSERT INTO volunteers ({", ".join(_VOLUNTEER_FIELDS)})
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text[], $12, $13)
+ON CONFLICT (email) DO UPDATE SET
+    {", ".join(f"{c} = EXCLUDED.{c}" for c in _VOLUNTEER_FIELDS[1:])},
+    updated_at = now()
+"""
+
 _TRACK_COLUMNS = ("track_id, first_ns, last_ns, node_ids, point_count, speed_mps, max_speed_mps, max_accel_mps2, "
                   "classification, flags, last_point")
 
@@ -319,10 +330,42 @@ class Database:
                 request_id)
         return ClipRecord(**dict(row)) if row else None
 
-    async def node_labels(self, node_ids: Sequence[str]) -> Dict[str, Optional[str]]:
+    async def list_nodes(self) -> List[NodeRecord]:
+        """Registered and previously seen nodes (survives restarts of the memory backend)."""
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch("SELECT node_id, label FROM nodes WHERE node_id = ANY($1::text[])", list(node_ids))
-        return {r["node_id"]: r["label"] for r in rows}
+            rows = await conn.fetch(
+                "SELECT node_id, label, lat, lon, alt_m, yaw_deg, pitch_deg, roll_deg, fov_h_deg, fov_v_deg,"
+                " last_seen_ns, status, software_version, registered_ns FROM nodes")
+        return [NodeRecord(r["node_id"], r["label"], r["lat"], r["lon"], r["alt_m"], r["yaw_deg"], r["pitch_deg"],
+                           r["roll_deg"], r["fov_h_deg"], r["fov_v_deg"], r["last_seen_ns"] or 0,
+                           orjson.loads(r["status"]) if r["status"] else {}, r["software_version"],
+                           r["registered_ns"]) for r in rows]
+
+    # --- volunteers ---------------------------------------------------------
+
+    async def upsert_volunteer(self, v: Dict[str, Any]) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(_UPSERT_VOLUNTEER, *[v[name] for name in _VOLUNTEER_FIELDS])
+
+    async def volunteer_summary(self, min_count: int) -> Dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            total = await conn.fetchval("SELECT count(*) FROM volunteers")
+            rows = await conn.fetch(
+                "SELECT least(floor(approx_lat), 89) AS la, least(floor(approx_lon), 179) AS lo, count(*) AS n"
+                " FROM volunteers WHERE approx_lat IS NOT NULL AND approx_lon IS NOT NULL"
+                " GROUP BY 1, 2 HAVING count(*) >= $1 ORDER BY 1, 2", min_count)
+        return {"total": int(total),
+                "cells": [{"lat": r["la"] + 0.5, "lon": r["lo"] + 0.5, "count": int(r["n"])} for r in rows]}
+
+    async def list_volunteers(self) -> List[Dict[str, Any]]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(f"SELECT id, {', '.join(_VOLUNTEER_FIELDS)}, created_at, updated_at"
+                                    " FROM volunteers ORDER BY id")
+        return [{**dict(r), "interests": list(r["interests"])} for r in rows]
+
+    async def delete_volunteer(self, volunteer_id: int) -> bool:
+        async with self.pool.acquire() as conn:
+            return await conn.execute("DELETE FROM volunteers WHERE id = $1", volunteer_id) == "DELETE 1"
 
 
 async def migrate(url: str, directory: Path = MIGRATIONS_DIR) -> List[str]:

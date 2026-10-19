@@ -54,6 +54,14 @@ def triangulate_many_fast(
     ref = rays[0].origin
     rel = [(r.origin[0] - ref[0], r.origin[1] - ref[1], r.origin[2] - ref[2]) for r in rays]
     dirs = [r.direction for r in rays]
+    # Per ray: the projector I - v v^T (6 unique entries) and its product with
+    # the origin, which do not change between re-weighting iterations.
+    terms = []
+    for (ox, oy, oz), (vx, vy, vz) in zip(rel, dirs):
+        p11, p22, p33 = 1.0 - vx * vx, 1.0 - vy * vy, 1.0 - vz * vz
+        p12, p13, p23 = -vx * vy, -vx * vz, -vy * vz
+        terms.append((p11, p12, p13, p22, p23, p33, p11 * ox + p12 * oy + p13 * oz,
+                      p12 * ox + p22 * oy + p23 * oz, p13 * ox + p23 * oy + p33 * oz))
     s = math.radians(angular_sigma_deg)
     weights = [1.0] * len(rays)
     x = (0.0, 0.0, 0.0)
@@ -61,19 +69,16 @@ def triangulate_many_fast(
     for _ in range(iterations + 1):
         a11 = a12 = a13 = a22 = a23 = a33 = 0.0
         b1 = b2 = b3 = 0.0
-        for w, (ox, oy, oz), (vx, vy, vz) in zip(weights, rel, dirs):
-            # w * (I - v v^T) and w * (I - v v^T) o
-            p11, p22, p33 = 1.0 - vx * vx, 1.0 - vy * vy, 1.0 - vz * vz
-            p12, p13, p23 = -vx * vy, -vx * vz, -vy * vz
+        for w, (p11, p12, p13, p22, p23, p33, q1, q2, q3) in zip(weights, terms):
             a11 += w * p11
             a12 += w * p12
             a13 += w * p13
             a22 += w * p22
             a23 += w * p23
             a33 += w * p33
-            b1 += w * (p11 * ox + p12 * oy + p13 * oz)
-            b2 += w * (p12 * ox + p22 * oy + p23 * oz)
-            b3 += w * (p13 * ox + p23 * oy + p33 * oz)
+            b1 += w * q1
+            b2 += w * q2
+            b3 += w * q3
         lo, hi = _sym3_eig_extremes(a11, a12, a13, a22, a23, a33)
         if lo <= 0.0 or hi / lo > _COND_LIMIT:
             return None

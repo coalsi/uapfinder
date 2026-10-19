@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from skynet_common.geodesy import Vec3
+from skynet_common.geodesy import Vec3, ecef_to_enu_vector, enu_to_azel
 
 TRACK_POINT_KEYS = ("t_ns", "lat", "lon", "alt_m", "sigma_m", "error_margin_m", "node_ids")
 
@@ -102,7 +102,12 @@ class Detection:
 
 @dataclass(slots=True)
 class RayObs:
-    """A ray contributing to a triangulation (possibly interpolated in time)."""
+    """A ray contributing to a triangulation (possibly interpolated in time).
+
+    For interpolated rays ``az_deg``/``el_deg`` start as None and are derived
+    from ``direction`` on first use by ``azel()``: most rays only take part
+    in matching and never need them.
+    """
 
     node_id: str
     seq: int  # seq of the (nearest) sample used
@@ -110,11 +115,16 @@ class RayObs:
     lat: float
     lon: float
     alt_m: float
-    az_deg: float
-    el_deg: float
+    az_deg: Optional[float]
+    el_deg: Optional[float]
     origin: Vec3
     direction: Vec3
     interpolated: bool = False
+
+    def azel(self) -> Tuple[float, float]:
+        if self.az_deg is None or self.el_deg is None:
+            self.az_deg, self.el_deg = enu_to_azel(*ecef_to_enu_vector(self.lat, self.lon, self.direction))
+        return self.az_deg, self.el_deg
 
 
 @dataclass(slots=True)
@@ -163,6 +173,7 @@ class TrackState:
     clip_nodes: List[str] = field(default_factory=list)
     last_event_ns: int = 0
     last_fit_ns: int = 0
+    last_long_fit_ns: int = 0
 
     def public(self) -> Dict[str, Any]:
         return {
@@ -183,12 +194,12 @@ class TrackState:
         return [self.track_id, self.created_ns, self.first_ns, self.last_ns, self.node_ids, self.point_count,
                 self.last_point, self.recent, self.history, self.speed_mps, self.max_speed_mps,
                 self.max_accel_mps2, self.classification, self.flags, self.clip_nodes, self.last_event_ns,
-                self.last_fit_ns]
+                self.last_fit_ns, self.last_long_fit_ns]
 
     @classmethod
     def from_row(cls, r: list) -> "TrackState":
         return cls(r[0], r[1], r[2], r[3], r[4], r[5], r[6], [tuple(p) for p in r[7]], r[8], r[9], r[10], r[11],
-                   r[12], r[13], r[14], r[15], r[16])
+                   r[12], r[13], r[14], r[15], r[16], r[17])
 
 
 def track_point(t_ns: int, lat: float, lon: float, alt_m: float, sigma_m: float, error_margin_m: float,

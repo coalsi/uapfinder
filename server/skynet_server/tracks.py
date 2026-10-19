@@ -4,36 +4,39 @@ Linking: each node reports a local ``track_id`` per object, so a 3D track is
 the set of triangulations whose rays share a (node_id, local track) link.
 A new triangulation joins an existing 3D track if any of its rays' local
 tracks is already linked (the one with most points wins if several are);
-otherwise a new 3D track is created. Links expire after
-``link_ttl`` without updates.
+otherwise a new 3D track is created. Links expire after ``link_ttl``
+without updates.
 
-Kinematics: successive triangulated points are noisy (sigma tens of metres at
-typical ranges), so velocity and acceleration come from weighted
-least-squares polynomial fits, never from finite differences:
+Kinematics: triangulated points are noisy (sigma tens of metres at typical
+ranges), so velocity and acceleration come from weighted least-squares
+polynomial fits with one outlier-rejection pass, never from finite
+differences. The window length is set by what the fit can resolve:
 
-* a line and a quadratic over the last ~1 s of points ("recent" window) for
-  the current speed and short manoeuvres;
-* a line and a quadratic over a 1 Hz decimated history of the last 30 s for
-  sustained acceleration, ballistic flight and stationarity.
+* speed: a line over the last ~1 s (sigma_v ~ 20 m/s at 10 Hz and 20 m);
+* acceleration: a quadratic over the last ~3 s at full rate. Over 1 s the
+  acceleration error would be ~100 m/s^2, the size of the 10 g threshold
+  itself; over 3 s it is ~10 m/s^2 (sigma_a scales as T^-2.5);
+* ballistic flight and stationarity: a 1 Hz decimated history of the last
+  30 s (line and quadratic).
 
-Each fit also yields the parameter's standard error (scaled by the reduced
-chi-square when the scatter exceeds the error model), and the classifier
-uses 2-sigma lower bounds so that noise alone cannot trigger a flag. The
-reported ``max_accel_mps2`` is that lower bound, because the raw quadratic
-term of a 1 s fit is dominated by noise (hundreds of m/s^2 at 40 m sigma).
-
-Rules (API.md): ``hypersonic`` speed > 1715 m/s; ``high_g`` acceleration >
-98 m/s^2; ``stationary`` speed < 2 m/s over 30 s; ``ballistic`` (not
-numerically defined in the API) is a trajectory whose acceleration over
->= 5 s matches local gravity within max(3 sigma, 2 m/s^2) while moving at
->= 100 m/s, with the acceleration known to <= 3 m/s^2 (so that free fall is
-distinguishable from constant velocity). Drag and the Coriolis term
-(< 0.3 m/s^2 below Mach 6) are ignored. Flags are sticky over the track's
-life; ``classification`` is the highest-priority fired flag.
+Each fit yields standard errors (scaled up by the reduced chi-square when
+the scatter exceeds the error model). Flags are evaluated on conservative
+bounds, because a track is re-fitted ten times a second and the largest of
+hundreds of noisy estimates is far from typical: ``hypersonic`` needs
+speed - 3 sigma_v > 1715 m/s; ``high_g`` needs |a| - 3.5 sigma_a > 98 m/s^2
+from a fit with sigma_a <= 25 m/s^2 (the reported ``max_accel_mps2`` is that
+lower bound); ``stationary`` needs speed + 2 sigma_v < 2 m/s over >= 29 s.
+``ballistic`` (not numerically defined in the API) is free fall: over
+>= 5 s, at >= 100 m/s, the acceleration matches local gravity within
+max(3 sigma_a, 2 m/s^2) with sigma_a <= 1.5 m/s^2, so that it is clearly
+distinguished from constant velocity (|a| >= g/2). Drag and the Coriolis
+term (< 0.3 m/s^2 below Mach 6) are ignored. Flags are sticky over the
+track's life; ``classification`` is the highest-priority fired flag.
 """
 
 from __future__ import annotations
 
+import bisect
 import math
 import secrets
 from dataclasses import dataclass
@@ -54,12 +57,21 @@ FLAG_ORDER = ("hypersonic", "high_g", "ballistic", "stationary")
 _HISTORY_SLOT_S = 1.0
 _HISTORY_SPAN_S = 31.0
 _BALLISTIC_SPAN_S = 10.0
-_FIT_INTERVAL_NS = 100_000_000
-_SAME_FRAME_NS = 20_000_000
-_REFINE_RATIO = 1.25
+_FIT_INTERVAL_NS = 250_000_000
+_LONG_FIT_INTERVAL_NS = 1_000_000_000
+_SPEED_WINDOW_S = 1.0
+_ACCEL_MIN_POINTS = 12
+_ACCEL_MIN_SPAN_S = 2.0
+_ACCEL_MAX_SIGMA = HIGH_G_MPS2 / 4.0
+SAME_FRAME_NS = 20_000_000
+REFINE_RATIO = 1.25
 _OUTLIER_SIGMA = 3.5
 
 Sample = Tuple[float, float, float, float, float]  # t_s, x, y, z, sigma_m
+
+
+def _sample_time(sample: Tuple[int, float, float, float, float]) -> int:
+    return sample[0]
 
 
 @dataclass
@@ -84,16 +96,10 @@ class Fit:
         return math.sqrt(ax * ax + ay * ay + az * az)
 
 
-def fit_polynomial(samples: Sequence[Sample], quadratic: bool) -> Optional[Fit]:
-    """Weighted least-squares fit of position vs time, per ECEF axis.
-
-    Time is measured from the latest sample, so the fitted velocity and
-    acceleration refer to that instant. Each sample's ``sigma_m`` is a 3D RMS
-    error, i.e. sigma^2/3 per axis, giving weights 3/sigma^2.
-    """
+def _fit_once(samples: Sequence[Sample], quadratic: bool) -> Optional[Tuple[Fit, List[float]]]:
+    """Weighted least squares per ECEF axis; returns the fit and each
+    sample's normalised 3D residual (|residual| / sample sigma)."""
     n = len(samples)
-    if n < (4 if quadratic else 3):
-        return None
     t_ref = samples[-1][0]
     x_ref, y_ref, z_ref = samples[-1][1], samples[-1][2], samples[-1][3]
     s0 = s1 = s2 = s3 = s4 = 0.0
@@ -148,11 +154,15 @@ def fit_polynomial(samples: Sequence[Sample], quadratic: bool) -> Optional[Fit]:
         var_v, var_c2 = c11 / det, c22 / det
         n_params = 3
     chi2 = 0.0
+    normalised = []
     for t, w, dy in rows:
+        e2 = 0.0
         for axis in range(3):
             c0, c1, c2 = coeffs[axis]
             e = dy[axis] - (c0 + c1 * t + c2 * t * t)
-            chi2 += w * e * e
+            e2 += e * e
+        chi2 += w * e2
+        normalised.append(math.sqrt(w * e2 / 3.0))
     dof = 3 * n - 3 * n_params
     scale = max(1.0, chi2 / dof) if dof > 0 else 1.0
     fit = Fit(
@@ -164,7 +174,33 @@ def fit_polynomial(samples: Sequence[Sample], quadratic: bool) -> Optional[Fit]:
     if quadratic:
         fit.accel = (2.0 * coeffs[0][2], 2.0 * coeffs[1][2], 2.0 * coeffs[2][2])
         fit.sigma_a = 2.0 * math.sqrt(var_c2 * scale)
-    return fit
+    return fit, normalised
+
+
+def fit_polynomial(samples: Sequence[Sample], quadratic: bool) -> Optional[Fit]:
+    """Weighted least-squares fit of position vs time, per ECEF axis.
+
+    Time is measured from the latest sample, so the fitted velocity and
+    acceleration refer to that instant. Each sample's ``sigma_m`` is a 3D RMS
+    error, i.e. sigma^2/3 per axis, giving weights 3/sigma^2. Samples more
+    than ``_OUTLIER_SIGMA`` from the first fit (in units of their own sigma
+    and the fit's RMS scatter, whichever is larger) are dropped once and the
+    fit is repeated, so one bad association cannot fake a manoeuvre.
+    """
+    min_n = 4 if quadratic else 3
+    if len(samples) < min_n:
+        return None
+    first = _fit_once(samples, quadratic)
+    if first is None:
+        return None
+    fit, normalised = first
+    rms = math.sqrt(sum(x * x for x in normalised) / len(normalised))
+    limit = _OUTLIER_SIGMA * max(1.0, rms)
+    kept = [s for s, x in zip(samples, normalised) if x <= limit]
+    if len(kept) == len(samples) or len(kept) < min_n:
+        return fit
+    again = _fit_once(kept, quadratic)
+    return again[0] if again is not None else fit
 
 
 def gravity_ecef(lat_deg: float, lon_deg: float, alt_m: float) -> Tuple[float, float, float]:
@@ -249,9 +285,13 @@ class TrackManager:
         estimated speed, 8 km/s when the speed is not yet known): it only
         has to separate distinct objects, not police manoeuvres.
         """
-        if not track.recent:
+        recent = track.recent
+        if not recent:
             return True
-        t, x, y, z, sig = min(track.recent, key=lambda s: abs(s[0] - m.t_ns))
+        i = bisect.bisect_left(recent, m.t_ns, key=_sample_time)  # recent is time-sorted
+        if i == len(recent) or (i > 0 and m.t_ns - recent[i - 1][0] <= recent[i][0] - m.t_ns):
+            i -= 1
+        t, x, y, z, sig = recent[i]
         dt = abs(m.t_ns - t) / 1e9
         px, py, pz = m.point
         dist = math.sqrt((px - x) ** 2 + (py - y) ** 2 + (pz - z) ** 2)
@@ -264,14 +304,14 @@ class TrackManager:
 
         A frame seen by k nodes yields up to k-1 triangulations as its packets
         arrive, each with one more ray. Keeping only those that improve on the
-        frame's best sigma by at least ``1 - 1/_REFINE_RATIO`` (20%) leaves
+        frame's best sigma by at least ``1 - 1/REFINE_RATIO`` (20%) leaves
         about log2(k) points per frame instead of k-1, without losing the most
         precise solutions.
         """
         for t, _, _, _, sigma in reversed(track.recent):
-            if abs(t - m.t_ns) < _SAME_FRAME_NS and sigma <= _REFINE_RATIO * m.sigma_m:
+            if abs(t - m.t_ns) < SAME_FRAME_NS and sigma <= REFINE_RATIO * m.sigma_m:
                 return True
-            if t < m.t_ns - _SAME_FRAME_NS:
+            if t < m.t_ns - SAME_FRAME_NS:
                 break
         return False
 
@@ -290,9 +330,14 @@ class TrackManager:
                                                node_ids)
             self._add_sample(track, m)
             before = (track.classification, tuple(track.flags))
-            if created or abs(m.t_ns - track.last_fit_ns) >= _FIT_INTERVAL_NS:
-                track.last_fit_ns = m.t_ns
-                self._update_kinematics(track)
+            short = created or abs(m.t_ns - track.last_fit_ns) >= _FIT_INTERVAL_NS
+            long = abs(m.t_ns - track.last_long_fit_ns) >= _LONG_FIT_INTERVAL_NS
+            if short or long:
+                if short:
+                    track.last_fit_ns = m.t_ns
+                if long:
+                    track.last_long_fit_ns = m.t_ns
+                self._update_kinematics(track, short, long)
             changed = (track.classification, tuple(track.flags)) != before
         emit = created or changed or bool(new_nodes) or m.t_ns - track.last_event_ns >= self.cfg.event_interval_ns
         if emit:
@@ -304,7 +349,7 @@ class TrackManager:
 
         A frame seen by k nodes yields up to k-1 triangulations of nearly the
         same instant from nested ray subsets; their errors are strongly
-        correlated, so only the most precise one per ``_SAME_FRAME_NS`` is
+        correlated, so only the most precise one per ``SAME_FRAME_NS`` is
         kept for the fits. A sample enters the decimated history once a
         later frame has superseded it.
         """
@@ -315,7 +360,7 @@ class TrackManager:
         while i > 0 and recent[i - 1][0] > m.t_ns:
             i -= 1
         for j in (i - 1, i):
-            if 0 <= j < len(recent) and abs(recent[j][0] - m.t_ns) < _SAME_FRAME_NS:
+            if 0 <= j < len(recent) and abs(recent[j][0] - m.t_ns) < SAME_FRAME_NS:
                 if m.sigma_m < recent[j][4]:
                     recent[j] = sample
                 return
@@ -364,14 +409,20 @@ class TrackManager:
                 out.append((t, sx / n, sy / n, sz / n, math.sqrt(sv / n / n)))
         return out
 
-    def _update_kinematics(self, track: TrackState) -> None:
-        recent = [((t - track.created_ns) / 1e9, x, y, z, s) for t, x, y, z, s in track.recent]
-        line = fit_polynomial(recent, quadratic=False)
-        quad = fit_polynomial(recent, quadratic=True) if len(recent) >= 7 else None
-        long_samples = self._history_samples(track, STATIONARY_SPAN_S)
-        long_line = fit_polynomial(long_samples, quadratic=False) if len(long_samples) >= 3 else None
-        ballistic_samples = self._history_samples(track, _BALLISTIC_SPAN_S)
-        long_quad = fit_polynomial(ballistic_samples, quadratic=True) if len(ballistic_samples) >= 5 else None
+    def _update_kinematics(self, track: TrackState, short: bool, long: bool) -> None:
+        """Refit the full-rate windows (``short``) and/or the decimated history
+        (``long``, which only changes once per second) and update the flags."""
+        line = quad = long_line = long_quad = None
+        if short:
+            recent = [((t - track.created_ns) / 1e9, x, y, z, s) for t, x, y, z, s in track.recent]
+            last_s = recent[-1][0] if recent else 0.0
+            line = fit_polynomial([x for x in recent if x[0] >= last_s - _SPEED_WINDOW_S], quadratic=False)
+            quad = fit_polynomial(recent, quadratic=True) if len(recent) >= _ACCEL_MIN_POINTS else None
+        if long:
+            long_samples = self._history_samples(track, STATIONARY_SPAN_S)
+            long_line = fit_polynomial(long_samples, quadratic=False) if len(long_samples) >= 3 else None
+            ballistic_samples = self._history_samples(track, _BALLISTIC_SPAN_S)
+            long_quad = fit_polynomial(ballistic_samples, quadratic=True) if len(ballistic_samples) >= 5 else None
 
         current = line if line is not None and line.n >= 5 and line.span_s >= 0.4 else long_line
         if current is not None:
@@ -379,22 +430,23 @@ class TrackManager:
             track.max_speed_mps = max(track.max_speed_mps, current.speed)
         flags = set(track.flags)
         for fit in (line, long_line):
-            if fit is not None and fit.n >= 5 and fit.speed - 2.0 * fit.sigma_v > HYPERSONIC_MPS:
+            if fit is not None and fit.n >= 5 and fit.speed - 3.0 * fit.sigma_v > HYPERSONIC_MPS:
                 flags.add("hypersonic")
-        for fit, min_n, min_span in ((quad, 7, 0.6), (long_quad, 5, 4.0)):
-            if fit is not None and fit.n >= min_n and fit.span_s >= min_span:
-                track.max_accel_mps2 = max(track.max_accel_mps2, fit.accel_mag - 2.0 * fit.sigma_a)
+        for fit, min_span in ((quad, _ACCEL_MIN_SPAN_S), (long_quad, 4.0)):
+            if (fit is not None and fit.span_s >= min_span and fit.sigma_a <= _ACCEL_MAX_SIGMA
+                    and fit.accel is not None):
+                track.max_accel_mps2 = max(track.max_accel_mps2, fit.accel_mag - 3.5 * fit.sigma_a)
         if track.max_accel_mps2 > HIGH_G_MPS2:
             flags.add("high_g")
         if (long_line is not None and long_line.span_s >= STATIONARY_SPAN_S - 1.0
-                and long_line.speed < STATIONARY_MPS):
+                and long_line.speed + 2.0 * long_line.sigma_v < STATIONARY_MPS):
             flags.add("stationary")
         if long_quad is not None and long_quad.accel is not None and long_quad.span_s >= 5.0 and track.last_point:
             lp = track.last_point
             g = gravity_ecef(lp["lat"], lp["lon"], lp["alt_m"])
             a = long_quad.accel
             mismatch = math.sqrt(sum((a[i] - g[i]) ** 2 for i in range(3)))
-            if (long_quad.sigma_a <= 3.0 and long_quad.speed >= 100.0
+            if (long_quad.sigma_a <= 1.5 and long_quad.speed >= 100.0 and long_quad.accel_mag >= G0 / 2.0
                     and mismatch <= max(3.0 * long_quad.sigma_a, 2.0)):
                 flags.add("ballistic")
         track.flags = [f for f in FLAG_ORDER if f in flags]

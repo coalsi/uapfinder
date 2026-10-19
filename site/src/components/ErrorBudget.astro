@@ -15,12 +15,13 @@ const rows = [
 ];
 const max = Math.max(...rows.map((r) => r.s005));
 ---
+<p class="budget-caption" id="budget-caption">
+  Predicted 3D position error (1σ RMS) for two nodes due east–west and a target at 10 km altitude midway between
+  them, for three levels of pointing accuracy. From the project's error model (docs/MATH.md).
+</p>
+<p class="wide-hint" aria-hidden="true">Scroll the table sideways to see every column.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-labelledby="budget-caption">
-  <table class="budget">
-    <caption id="budget-caption">
-      Predicted 3D position error (1σ RMS) for two nodes due east–west and a target at 10 km altitude midway between
-      them, for three levels of pointing accuracy. From the project's error model (docs/MATH.md).
-    </caption>
+  <table class="budget" aria-labelledby="budget-caption">
     <thead>
       <tr>
         <th scope="col">Node spacing</th>
@@ -42,10 +43,8 @@ const max = Math.max(...rows.map((r) => r.s005));
             <td class="num">{r.elevation}</td>
             <td class="num">{r.s001}</td>
             <td class="bar-col">
-              <span class="bar-cell" title={`${r.s005} m at 0.05° pointing error`}>
-                <span class="bar-track" aria-hidden="true">
-                  <span class="bar" style={`--w:${((r.s005 / max) * 100).toFixed(1)}%`} />
-                </span>
+              <span class="bar-cell" title={`${r.s005} m at 0.05° pointing error`} style={`--w:${((r.s005 / max) * 100).toFixed(1)}%`}>
+                <span class="bar" aria-hidden="true" />
                 <span class="bar-val">{r.s005} m</span>
               </span>
             </td>
@@ -58,8 +57,31 @@ const max = Math.max(...rows.map((r) => r.s005));
 </div>
 
 <style>
+  .budget-caption {
+    color: var(--muted);
+    font-size: 0.9rem;
+    max-width: 80ch;
+    margin-bottom: 10px;
+  }
+
   .budget {
     min-width: 720px;
+  }
+
+  .budget thead th:first-child,
+  .budget tbody th {
+    position: sticky;
+    left: 0;
+    background: var(--surface);
+    white-space: nowrap;
+    z-index: 1;
+  }
+
+  @media (max-width: 760px) {
+    .budget thead th:first-child,
+    .budget tbody th {
+      box-shadow: 1px 0 0 var(--line);
+    }
   }
 
   .bar-col {
@@ -67,29 +89,25 @@ const max = Math.max(...rows.map((r) => r.s005));
     min-width: 200px;
   }
 
+  /* Bars share one linear scale (75% of the cell = the largest value), and
+     the value sits at each bar's tip. */
   .bar-cell {
     display: flex;
     align-items: center;
-    gap: 10px;
-  }
-
-  .bar-track {
-    flex: 1;
-    display: block;
+    gap: 8px;
   }
 
   .bar {
     display: block;
+    flex: none;
     height: 12px;
-    width: var(--w);
+    width: calc(var(--w) * 0.75);
     min-width: 4px;
     background: var(--accent-strong);
     border-radius: 0 4px 4px 0;
   }
 
   .bar-val {
-    flex: 0 0 3.6em;
-    text-align: right;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     color: var(--text);

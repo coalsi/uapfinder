@@ -170,7 +170,7 @@ const parts: Part[] = [
         </p>
       </div>
       <div class="table-wrap" tabindex="0" role="region" aria-labelledby="parts-caption">
-        <table class="parts">
+        <table class="parts table-stack">
           <caption id="parts-caption">Node parts list, approximate prices as of {PRICES_AS_OF}</caption>
           <thead>
             <tr>
@@ -193,9 +193,9 @@ const parts: Part[] = [
                       </>
                     )}
                   </th>
-                  <td>{p.example}</td>
-                  <td class="num">{p.price}</td>
-                  <td class="note">{p.note}</td>
+                  <td class="ex" data-label="Example">{p.example}</td>
+                  <td class="num price" data-label="Approx. price">{p.price}</td>
+                  <td class="note" data-label="Notes">{p.note}</td>
                 </tr>
               ))
             }
@@ -203,7 +203,7 @@ const parts: Part[] = [
           <tfoot>
             <tr>
               <th scope="row" colspan="2">Typical total, including the recommended ADS-B receiver</th>
-              <td class="num">≈ $700–1,000</td>
+              <td class="num price" data-label="Approx. total">≈ $700–1,000</td>
               <td class="note">Excludes tax, shipping and any tools.</td>
             </tr>
           </tfoot>
@@ -242,7 +242,7 @@ const parts: Part[] = [
       <dl class="figures">
         <div><dt>Average draw</dt><dd>15–30 W</dd></div>
         <div><dt>Per year</dt><dd>130–260 kWh</dd></div>
-        <div><dt>At 18.3¢/kWh</dt><dd>$24–48</dd></div>
+        <div><dt>Cost per year at 18.3¢/kWh</dt><dd>$24–48</dd></div>
       </dl>
     </div>
   </section>
@@ -257,7 +257,7 @@ const parts: Part[] = [
         </p>
       </div>
       <div class="table-wrap" tabindex="0" role="region" aria-labelledby="bw-caption">
-        <table>
+        <table class="table-stack">
           <caption id="bw-caption">Estimated upload traffic per node</caption>
           <thead>
             <tr>
@@ -269,28 +269,28 @@ const parts: Part[] = [
           <tbody>
             <tr>
               <th scope="row">Idle, UDP transport</th>
-              <td>≈ 5 MB a day (≈ 150 MB a month)</td>
-              <td>One signed heartbeat of about 550 bytes every 10 seconds.</td>
+              <td data-label="Estimate">≈ 5 MB a day (≈ 150 MB a month)</td>
+              <td data-label="Basis">One signed heartbeat of about 550 bytes every 10 seconds.</td>
             </tr>
             <tr>
               <th scope="row">Idle, HTTPS transport</th>
-              <td>≈ 50 MB a day (≈ 1.5 GB a month)</td>
-              <td>Heartbeats plus a check for server commands every 2 seconds, assuming about 1 KB of protocol overhead per request.</td>
+              <td data-label="Estimate">≈ 50 MB a day (≈ 1.5 GB a month)</td>
+              <td data-label="Basis">Heartbeats plus a check for server commands every 2 seconds, assuming about 1 KB of protocol overhead per request.</td>
             </tr>
             <tr>
               <th scope="row">Tracking an object</th>
-              <td>≈ 5 KB/s (≈ 42 kbit/s) while it is in view</td>
-              <td>Ten telemetry packets of about 520 bytes per second, per object.</td>
+              <td data-label="Estimate">≈ 5 KB/s (≈ 42 kbit/s) while it is in view</td>
+              <td data-label="Basis">Ten telemetry packets of about 520 bytes per second, per object.</td>
             </tr>
             <tr>
               <th scope="row">Clip upload</th>
-              <td>Roughly 5–25 MB per clip</td>
-              <td>10 seconds of 1080p, 60 fps H.264, sent only after a confirmed stereo match. Size depends strongly on sensor noise.</td>
+              <td data-label="Estimate">Roughly 5–25 MB per clip</td>
+              <td data-label="Basis">10 seconds of 1080p, 60 fps H.264, sent only after a confirmed stereo match. Size depends strongly on sensor noise.</td>
             </tr>
             <tr>
               <th scope="row">Online ADS-B feed</th>
-              <td>Varies with air traffic</td>
-              <td>Polled once a second if used. A local ADS-B receiver uses no internet bandwidth at all.</td>
+              <td data-label="Estimate">Varies with air traffic</td>
+              <td data-label="Basis">Polled once a second if used. A local ADS-B receiver uses no internet bandwidth at all.</td>
             </tr>
           </tbody>
         </table>
@@ -302,7 +302,7 @@ const parts: Part[] = [
   </section>
 
   <section id="setup" class="section anchor-section" aria-labelledby="setup-title">
-    <div class="wrap split split--wide-left">
+    <div class="wrap split split--wide-left split--top">
       <div>
         <h2 id="setup-title">Setup overview</h2>
         <p>
@@ -405,7 +405,7 @@ const parts: Part[] = [
       <div class="section-head">
         <h2 id="place-title">Placement tips</h2>
       </div>
-      <div class="grid grid-2">
+      <div class="grid grid-2x2">
         <article class="card">
           <h3>Point it at the sky, not the neighbours</h3>
           <p>
@@ -457,6 +457,51 @@ const parts: Part[] = [
 
   .parts .badge {
     margin-top: 6px;
+  }
+
+  @media (max-width: 640px) {
+    .parts tbody tr,
+    .parts tfoot tr {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "part price"
+        "ex ex"
+        "note note";
+      column-gap: 12px;
+    }
+
+    .parts tbody th,
+    .parts tfoot th {
+      grid-area: part;
+    }
+
+    .parts .price {
+      grid-area: price;
+      text-align: right !important;
+      font-weight: 650;
+      white-space: nowrap !important;
+    }
+
+    .parts .price::before {
+      display: none !important;
+    }
+
+    .parts .ex {
+      grid-area: ex;
+    }
+
+    .parts td.note {
+      grid-area: note;
+    }
+
+    .parts tbody th br {
+      display: none;
+    }
+
+    .parts .badge {
+      margin: 0 0 0 6px;
+    }
   }
 
   .figures {
@@ -516,6 +561,7 @@ const parts: Part[] = [
 
   .cell.b {
     background: #1a2438;
+    box-shadow: inset 0 0 0 1px #2a3958;
   }
 
   .cov-key {

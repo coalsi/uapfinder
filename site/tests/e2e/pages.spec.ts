@@ -117,6 +117,7 @@ test.describe("site", () => {
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
     await expect(nav.getByRole("link", { name: "How it works" })).toBeVisible();
+    await page.waitForTimeout(400); // let the icon's 0.2 s transition finish
     await page.screenshot({ path: join(SCREENSHOT_DIR, "mobile-menu-open.png") });
     await page.keyboard.press("Escape");
     await expect(toggle).toHaveAttribute("aria-expanded", "false");

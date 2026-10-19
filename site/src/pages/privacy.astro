@@ -55,13 +55,13 @@ const formFields = [
         <h2 id="form">The interest form</h2>
         <p>The form on <a href="/get-involved/#signup">Get involved</a> stores only what you type in or choose:</p>
         <div class="table-wrap" tabindex="0" role="region" aria-labelledby="fields-caption">
-          <table>
+          <table class="table-stack">
             <caption id="fields-caption">Interest-form fields and why we ask</caption>
             <thead>
               <tr><th scope="col">Field</th><th scope="col">Required?</th><th scope="col">Why</th></tr>
             </thead>
             <tbody>
-              {formFields.map(([f, r, w]) => <tr><th scope="row">{f}</th><td>{r}</td><td>{w}</td></tr>)}
+              {formFields.map(([f, r, w]) => <tr><th scope="row">{f}</th><td data-label="Required?">{r}</td><td data-label="Why">{w}</td></tr>)}
             </tbody>
           </table>
         </div>

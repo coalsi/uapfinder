@@ -34,13 +34,18 @@
   --wrap: 1140px;
   --prose: 68ch;
   --gutter: clamp(16px, 4vw, 32px);
-  --space-section: clamp(56px, 9vw, 104px);
+  --space-section: clamp(52px, 7.5vw, 92px);
 }
 
 *,
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+/* Author display rules (grid, flex) must never defeat the hidden attribute. */
+[hidden] {
+  display: none !important;
 }
 
 html {
@@ -126,6 +131,10 @@ li + li {
   margin-top: 0.35em;
 }
 
+pre[tabindex]:focus-visible {
+  outline-offset: 2px;
+}
+
 a {
   color: var(--accent);
   text-decoration-thickness: 1px;
@@ -198,6 +207,20 @@ hr {
   max-width: var(--prose);
 }
 
+/* A full-width container whose children keep a readable measure, aligned
+   with the left edge of other sections rather than centred. */
+.wrap.prose {
+  max-width: calc(var(--wrap) + 2 * var(--gutter));
+}
+
+.wrap.prose > * {
+  max-width: var(--prose);
+}
+
+.wrap.prose > .table-wrap {
+  max-width: 84ch;
+}
+
 .section {
   padding-block: var(--space-section);
 }
@@ -261,6 +284,16 @@ hr {
   display: grid;
   gap: clamp(28px, 5vw, 64px);
   align-items: center;
+}
+
+@media (min-width: 760px) {
+  .grid-2x2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.split--top {
+  align-items: start;
 }
 
 @media (min-width: 900px) {
@@ -465,6 +498,71 @@ tfoot th {
   border-top: 1px solid var(--line-strong);
   border-bottom: 0;
   font-weight: 600;
+}
+
+/* Tables that become stacked rows on phones. Cells with data-label get a
+   small label, so each row reads on its own without the column header. */
+@media (max-width: 640px) {
+  .table-stack {
+    min-width: 0 !important;
+  }
+
+  .table-stack thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .table-stack tr {
+    display: block;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .table-stack tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .table-stack tfoot tr {
+    border-top: 1px solid var(--line-strong);
+    border-bottom: 0;
+  }
+
+  .table-stack th,
+  .table-stack td {
+    display: block;
+    border: 0 !important;
+    padding: 2px 0 !important;
+    text-align: left !important;
+    white-space: normal !important;
+    min-width: 0 !important;
+  }
+
+  .table-stack td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-top: 8px;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+}
+
+.wide-hint {
+  display: none;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: -4px 0 10px;
+}
+
+@media (max-width: 760px) {
+  .wide-hint {
+    display: block;
+  }
 }
 
 /* Ordered steps */

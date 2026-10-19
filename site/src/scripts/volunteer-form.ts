@@ -85,6 +85,7 @@ function showErrors(form: HTMLFormElement, errors: FieldErrors, general: string[
     setFieldError(form, field, message);
     if (list) {
       const li = document.createElement("li");
+      li.dataset.summaryFor = field === "approx_lat" || field === "approx_lon" ? "location" : field;
       const control = fieldControl(form, field);
       const a = document.createElement("a");
       a.href = control?.id ? `#${control.id}` : "#signup";
@@ -226,11 +227,18 @@ export function initVolunteerForm(): void {
   initCounter(form);
   if (submit) submit.disabled = false;
 
-  // Clear a field's error as soon as the visitor edits it.
-  form.addEventListener("input", (e) => {
+  // Clear a field's error, and its line in the summary, as soon as the
+  // visitor edits it.
+  const onEdit = (e: Event) => {
     const target = e.target as HTMLInputElement | null;
-    if (target?.name && target.name !== "website") setFieldError(form, target.name as FieldName, undefined);
-  });
+    if (!target?.name || target.name === "website") return;
+    setFieldError(form, target.name as FieldName, undefined);
+    const summary = form.querySelector<HTMLElement>("[data-error-summary]");
+    summary?.querySelector(`[data-summary-for="${target.name}"]`)?.remove();
+    if (summary && !summary.querySelector("li")) summary.hidden = true;
+  };
+  form.addEventListener("input", onEdit);
+  form.addEventListener("change", onEdit);
 
   let sending = false;
   form.addEventListener("submit", async (e) => {

@@ -59,11 +59,13 @@ test.describe("volunteer form", () => {
     await expect(page.locator("#f-email-err")).toContainText("valid email");
     await expect(page.locator("#f-country-err")).toBeHidden();
 
-    // Editing a field clears its error.
+    // Editing a field clears its error and its line in the summary.
+    await expect(summary.locator("li")).toHaveCount(1);
+    await page.locator("#signup-form").screenshot({ path: join(SCREENSHOT_DIR, `${test.info().project.name}-form-validation.png`) });
     await page.getByLabel("Email").fill("jane@example.org");
     await expect(page.locator("#f-email-err")).toBeHidden();
+    await expect(summary).toBeHidden();
 
-    await page.locator("#signup-form").screenshot({ path: join(SCREENSHOT_DIR, `${test.info().project.name}-form-validation.png`) });
     expect(posts).toHaveLength(0);
     expect(errors).toEqual([]);
   });

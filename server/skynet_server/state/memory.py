@@ -6,9 +6,9 @@ Expiring collections (replay windows, pair claims, track links) are
 insertion-ordered dicts whose entries share one TTL, so the oldest entry is
 always first and pruning pops from the front instead of scanning.
 
-The matchmaker reads neighbour detections in place (``window``) instead of
-receiving copies, which is what makes this backend several times cheaper
-per packet than a networked one.
+The matchmaker reads neighbour detections in place (this class is its
+``DetectionSource``) instead of receiving copies, which is what makes this
+backend several times cheaper per packet than a networked one.
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ import bisect
 import collections
 import math
 import time
-from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from skynet_common.geodesy import haversine_m
 
-from ..matchmaker import Window
+from ..matchmaker import NodeSamples, TrackSamples, Window
 from ..models import ClipRecord, Commit, Detection, NodeRecord, TrackState
 from ..stats import StatsDelta
 from .base import Admission, AdmitResult, StateBackend, UdpAddr, event_id_key
@@ -66,44 +66,6 @@ class _Expiring:
         return entry[0] if entry is not None and entry[1] > now_ns else None
 
 
-def _insert_sorted(ts: List[int], dets: List[Detection], d: Detection, cutoff_ns: int) -> None:
-    if not ts or d.t_ns >= ts[-1]:
-        ts.append(d.t_ns)
-        dets.append(d)
-    else:
-        i = bisect.bisect_right(ts, d.t_ns)
-        ts.insert(i, d.t_ns)
-        dets.insert(i, d)
-    if ts[0] < cutoff_ns:
-        cut = bisect.bisect_left(ts, cutoff_ns)
-        del ts[:cut]
-        del dets[:cut]
-
-
-class _NodeDetections:
-    """One node's recent detections, time-sorted, plus a per-local-track
-    index so guided searches slice one track without filtering."""
-
-    __slots__ = ("ts", "dets", "tracks")
-
-    def __init__(self) -> None:
-        self.ts: List[int] = []
-        self.dets: List[Detection] = []
-        self.tracks: Dict[str, Tuple[List[int], List[Detection]]] = {}
-
-    def add(self, d: Detection, cutoff_ns: int) -> None:
-        _insert_sorted(self.ts, self.dets, d, cutoff_ns)
-        if d.track_id is not None:
-            entry = self.tracks.get(d.track_id)
-            if entry is None:
-                entry = self.tracks[d.track_id] = ([], [])
-            _insert_sorted(entry[0], entry[1], d, cutoff_ns)
-
-    def prune_tracks(self, cutoff_ns: int) -> None:
-        for tid in [t for t, (ts, _) in self.tracks.items() if ts[-1] < cutoff_ns]:
-            del self.tracks[tid]
-
-
 class MemoryState(StateBackend):
     name = "memory"
     prefetch = False
@@ -122,7 +84,7 @@ class MemoryState(StateBackend):
         self._indexed: Dict[str, Tuple[float, float, Tuple[int, int]]] = {}
         self._grid_version = 0
         self._neighbour_cache: Dict[str, Tuple[int, float, List[str]]] = {}
-        self._detections: Dict[str, _NodeDetections] = {}
+        self._detections: Dict[str, NodeSamples] = {}
         self._replay: Dict[str, "collections.OrderedDict[Tuple[int, int], int]"] = {}
         self._claims: Dict[int, _Expiring] = {}
         self._links: Dict[int, _Expiring] = {}
@@ -198,20 +160,17 @@ class MemoryState(StateBackend):
 
     # --- hot path ----------------------------------------------------------
 
-    def window(self, node_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
-        nd = self._detections.get(node_id)
-        if nd is None:
-            return ()
-        ts = nd.ts
-        return nd.dets[bisect.bisect_left(ts, lo_ns) : bisect.bisect_right(ts, hi_ns)]
+    def local_track(self, node_id: str, track_id: str) -> Optional[TrackSamples]:
+        ns = self._detections.get(node_id)
+        return ns.tracks.get(track_id) if ns is not None else None
 
-    def track_window(self, node_id: str, track_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
-        nd = self._detections.get(node_id)
-        entry = nd.tracks.get(track_id) if nd is not None else None
-        if entry is None:
-            return ()
-        ts = entry[0]
-        return entry[1][bisect.bisect_left(ts, lo_ns) : bisect.bisect_right(ts, hi_ns)]
+    def local_tracks(self, node_id: str) -> Iterable[TrackSamples]:
+        ns = self._detections.get(node_id)
+        return ns.tracks.values() if ns is not None else ()
+
+    def untracked(self, node_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
+        ns = self._detections.get(node_id)
+        return ns.untracked(lo_ns, hi_ns) if ns is not None else ()
 
     def _prune(self, now_ns: int) -> None:
         self._next_prune_ns = now_ns + _PRUNE_INTERVAL_NS
@@ -228,10 +187,10 @@ class MemoryState(StateBackend):
         for exp in (*self._claims.values(), *self._links.values()):
             exp.prune(now_ns)
         det_cutoff = now_ns - self.detection_retention_ns - self.replay_window_ns
-        for node_id in [n for n, nd in self._detections.items() if not nd.ts or nd.ts[-1] < det_cutoff]:
+        for node_id in [n for n, ns in self._detections.items() if ns.newest_ns < det_cutoff]:
             del self._detections[node_id]
-        for nd in self._detections.values():
-            nd.prune_tracks(nd.ts[-1] - self.detection_retention_ns)
+        for ns in self._detections.values():
+            ns.prune(ns.newest_ns - self.detection_retention_ns)
         if now_ns >= self._next_slow_prune_ns:
             self._next_slow_prune_ns = now_ns + _SLOW_PRUNE_INTERVAL_NS
             inactive = now_ns - self.node_active_ns
@@ -278,7 +237,7 @@ class MemoryState(StateBackend):
             if d is not None:
                 nd = self._detections.get(d.node_id)
                 if nd is None:
-                    nd = self._detections[d.node_id] = _NodeDetections()
+                    nd = self._detections[d.node_id] = NodeSamples()
                 # Relative to the node's own clock, so delayed (but still fresh)
                 # packets are kept long enough to be matched.
                 nd.add(d, d.t_ns - retention)

@@ -85,8 +85,8 @@ class MatchConfig:
 @dataclass(frozen=True)
 class TrackConfig:
     link_ttl_ms: int = 30_000
-    fit_window_ns: int = 1_000_000_000
-    max_recent_points: int = 48
+    fit_window_ns: int = 3_000_000_000  # full-rate samples kept for the acceleration fit
+    max_recent_points: int = 96
     max_points: int = 2_000
     event_interval_ns: int = 1_000_000_000
     retention_ns: int = 6 * 3600 * 1_000_000_000

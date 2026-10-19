@@ -101,7 +101,7 @@ export function buildStatsView(stats: NetworkStats | null, volunteers: number | 
       ? "Live from the network API. No nodes are online yet: the network is launching."
       : stats.activeNodes === 1
         ? "Live from the network API. Triangulation needs at least two nodes that see the same patch of sky."
-        : "Live from the network API. Most tracked objects turn out to be ordinary once measured.";
+        : "Live from the network API. Expect most tracked objects to prove ordinary once measured.";
   return { state: "live", tiles, note };
 }
 

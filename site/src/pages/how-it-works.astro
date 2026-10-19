@@ -117,7 +117,7 @@ const packet = `{
         pointing, the direction to the object and a few image measurements. It is signed with a key unique to the
         node, so the server can reject forged, stale (more than 10 seconds old) or replayed messages.
       </p>
-      <pre aria-label="Example telemetry packet"><code>{packet}</code></pre>
+      <pre tabindex="0" aria-label="Example telemetry packet"><code>{packet}</code></pre>
       <p class="small muted">
         Example from the <a href={links.protocolDoc}>wire protocol</a>. Serialised compactly and signed, a packet like
         this is about 520 bytes. Packets travel over UDP to a self-hosted server or over HTTPS in batches.

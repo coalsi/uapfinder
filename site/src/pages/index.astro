@@ -223,6 +223,30 @@ const jsonLd = {
   .hero-inner {
     position: relative;
     z-index: 1;
+    isolation: isolate;
+  }
+
+  /* Soft dark backdrop so background stars never sit between letters. */
+  .hero-inner::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    top: -48px;
+    bottom: -96px;
+    left: -100vw;
+    width: calc(100vw + min(1040px, 100%));
+    background: linear-gradient(90deg, rgb(6 10 19 / 0.88) calc(100% - 440px), transparent 100%);
+    -webkit-mask-image: linear-gradient(180deg, transparent, #000 48px, #000 calc(100% - 80px), transparent);
+    mask-image: linear-gradient(180deg, transparent, #000 48px, #000 calc(100% - 80px), transparent);
+    pointer-events: none;
+  }
+
+  /* On narrow screens the text fills the hero, so dim the sky behind it evenly. */
+  @media (max-width: 900px) {
+    .hero-inner::before {
+      width: 300vw;
+      background: rgb(6 10 19 / 0.9);
+    }
   }
 
   .hero h1 {
