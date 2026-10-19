@@ -18,12 +18,13 @@ dashboard/dist/
 # Vercel
 .vercel/
 
-# Local data and secrets
+# Local data and secrets (root-level runtime directories only: a bare
+# data/ would also hide source folders such as dashboard/src/data/)
 *.env
 .env*
 !.env.example
-data/
-clips/
+/data/
+/clips/
 *.y4m
 *.mp4
 

@@ -99,12 +99,12 @@ Built and tested in this repository's CI-equivalent runs (Linux, x86_64):
   turning point target is reported (direction error ≤ 0.012°) while a
   cloud, a bird and an ADS-B aircraft are filtered. Bench: 60 fps sustained
   at 1080p, 2.6 GB peak memory, on an x86 container.
-* **server**: 134 tests, including real Redis and PostGIS. The ground-truth
+* **server**: 135 tests, including real Redis and PostGIS. The ground-truth
   simulator passes over UDP and HTTPS, and the Docker Compose stack was run
   end to end (UDP through Docker, migrations, persistence).
 * **map**: 75 unit tests, production builds for `/` and `/map/`, verified
   in a browser against the live server (WebSocket feed, tracks, coverage).
-* **website**: 37 unit and 50 browser end-to-end tests.
+* **website**: 38 unit and 52 browser end-to-end tests.
 
 Not verified, because the hardware or services were not available here:
 
