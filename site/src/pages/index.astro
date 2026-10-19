@@ -4,7 +4,7 @@ import HeroSky from "../components/HeroSky.astro";
 import AmbiguityDiagram from "../components/AmbiguityDiagram.astro";
 import TriangulationDiagram from "../components/TriangulationDiagram.astro";
 import LiveStats from "../components/LiveStats.astro";
-import { links, SITE_NAME } from "../config";
+import { links, SITE_NAME, sitePath } from "../config";
 
 const description =
   "UAP Finder is a citizen-science network of passive sky cameras that triangulates unidentified aerial objects from several viewpoints to measure their position, altitude, speed and acceleration.";
@@ -29,7 +29,7 @@ const jsonLd = {
         altitude, speed, acceleration and error bars.
       </p>
       <div class="btn-row">
-        <a class="btn btn-primary" href="/host/">Host a node</a>
+        <a class="btn btn-primary" href={sitePath("/host/")}>Host a node</a>
         <a class="btn btn-secondary" href={links.map}>See the live map</a>
       </div>
       <p class="hero-note">
@@ -110,7 +110,7 @@ const jsonLd = {
         <article class="card">
           <svg class="card-icon" viewBox="0 0 36 36" aria-hidden="true" focusable="false"><rect x="6" y="9" width="24" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="2"></rect><path d="M11 14h4M11 19h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>
           <h3>Off-the-shelf</h3>
-          <p>A small AI computer, a camera module and a GPS receiver, all analysed on the device. See the <a href="/host/#cost">parts list and prices</a>.</p>
+          <p>A small AI computer, a camera module and a GPS receiver, all analysed on the device. See the <a href={sitePath("/host/#cost")}>parts list and prices</a>.</p>
         </article>
         <article class="card">
           <svg class="card-icon" viewBox="0 0 36 36" aria-hidden="true" focusable="false"><circle cx="18" cy="18" r="12" fill="none" stroke="currentColor" stroke-width="2"></circle><path d="M18 11v7l5 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>
@@ -153,7 +153,7 @@ const jsonLd = {
             </p>
           </li>
         </ol>
-        <p><a class="arrow-link" href="/how-it-works/">The full pipeline, error model and limitations</a></p>
+        <p><a class="arrow-link" href={sitePath("/how-it-works/")}>The full pipeline, error model and limitations</a></p>
       </div>
       <TriangulationDiagram
         id="home-tri"
@@ -188,7 +188,7 @@ const jsonLd = {
         <li><strong>Measurement first.</strong> Position, altitude, speed and acceleration, each with its uncertainty.</li>
         <li><strong>Transparency.</strong> The code, the geometry and the error model are <a href={links.repo}>open source</a>.</li>
         <li><strong>Privacy by design.</strong> Video stays on the node unless a confirmed stereo match asks for a clip. Public node locations are rounded to about 1 km.</li>
-        <li><strong>Honest limits.</strong> We say what the system cannot do. <a href="/how-it-works/#limitations">Read the limitations</a>.</li>
+        <li><strong>Honest limits.</strong> We say what the system cannot do. <a href={sitePath("/how-it-works/#limitations")}>Read the limitations</a>.</li>
       </ul>
     </div>
   </section>
@@ -201,8 +201,8 @@ const jsonLd = {
         valuable.
       </p>
       <div class="btn-row">
-        <a class="btn btn-primary" href="/host/">Host a node</a>
-        <a class="btn btn-secondary" href="/get-involved/">Other ways to help</a>
+        <a class="btn btn-primary" href={sitePath("/host/")}>Host a node</a>
+        <a class="btn btn-secondary" href={sitePath("/get-involved/")}>Other ways to help</a>
         <a class="btn btn-secondary" href={links.coverageMap}>Where nodes are needed</a>
       </div>
     </div>

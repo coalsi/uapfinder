@@ -3,7 +3,7 @@ import Base from "../layouts/Base.astro";
 import Pipeline from "../components/Pipeline.astro";
 import TriangulationDiagram from "../components/TriangulationDiagram.astro";
 import ErrorBudget from "../components/ErrorBudget.astro";
-import { links } from "../config";
+import { links, sitePath } from "../config";
 
 const description =
   "How UAP Finder works: on-device detection and filtering, metadata-only uplink, 50 ms stereo matching across nodes up to 80 miles apart, triangulation with an explicit error model, 3D tracks, and clips requested only after a confirmed match.";
@@ -325,7 +325,7 @@ const packet = `{
       <p class="small muted pub-note">
         Rounding is a safeguard, not a guarantee: published sight lines combined with triangulated positions could, in
         principle, narrow a node's location further. This is under review before launch. See the
-        <a href="/privacy/">privacy notice</a>.
+        <a href={sitePath("/privacy/")}>privacy notice</a>.
       </p>
     </div>
   </section>

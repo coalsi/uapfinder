@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import { CONTACT_EMAIL, links } from "../config";
+import { CONTACT_EMAIL, links, sitePath } from "../config";
 
 const description =
   "Plain-language privacy notice for UAP Finder: what the interest form collects and why, approximate location only, storage and access, deletion, what nodes send, and public rounding of node positions.";
@@ -53,7 +53,7 @@ const formFields = [
 
       <section aria-labelledby="form">
         <h2 id="form">The interest form</h2>
-        <p>The form on <a href="/get-involved/#signup">Get involved</a> stores only what you type in or choose:</p>
+        <p>The form on <a href={sitePath("/get-involved/#signup")}>Get involved</a> stores only what you type in or choose:</p>
         <div class="table-wrap" tabindex="0" role="region" aria-labelledby="fields-caption">
           <table class="table-stack">
             <caption id="fields-caption">Interest-form fields and why we ask</caption>
@@ -160,7 +160,7 @@ const formFields = [
             node shares its location with that provider to ask for nearby aircraft.
           </li>
         </ul>
-        <p>More detail: <a href="/how-it-works/#published">what is and isn't published</a>.</p>
+        <p>More detail: <a href={sitePath("/how-it-works/#published")}>what is and isn't published</a>.</p>
       </section>
 
       <section aria-labelledby="site">

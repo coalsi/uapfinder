@@ -19,6 +19,16 @@ export function withQuery(url: string, params: Record<string, string>): string {
 }
 
 /**
+ * Put a root-relative site path ("/host/") under the base path the site is
+ * deployed at: "/" on Vercel, "/uapfinder/" for a GitHub Pages project site.
+ */
+export function joinBase(base: string, path: string): string {
+  const b = base.trim().replace(/\/+$/, "");
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${b}${p}`;
+}
+
+/**
  * Join the API base (empty = same origin) with an API path such as
  * "/api/v1/stats".
  */

@@ -36,8 +36,10 @@ test.describe("pages @screenshots", () => {
       }
       await page.evaluate(() => document.fonts.ready);
 
-      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-      expect(overflow, "no horizontal page scroll").toBeLessThanOrEqual(0);
+      // Compare with the configured viewport, not innerWidth: mobile emulation
+      // widens the layout viewport to fit content that overflows.
+      const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+      expect(scrollWidth, "no horizontal page scroll").toBeLessThanOrEqual(page.viewportSize()!.width);
 
       await page.screenshot({ path: join(SCREENSHOT_DIR, `${info.project.name}-${p.name}.png`), fullPage: true });
       expect(errors).toEqual([]);

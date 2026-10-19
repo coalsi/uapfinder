@@ -190,17 +190,17 @@ The node then sends UDP to `mac-studio:9999` and uploads clips to
 
 ## 8. Point the website and map at the Mac
 
-In the Vercel project (imported from this GitHub repository; `vercel.json`
-builds the site at `/` and the map at `/map/`), add the environment variable
+In the Vercel project (imported from this GitHub repository as described in
+[docs/DEPLOY_VERCEL.md](../../docs/DEPLOY_VERCEL.md); `vercel.json` builds
+the site at `/` and the map at `/map/`), add the environment variable
 
 ```
 UAPF_API_BASE=https://mac-studio.<tailnet>.ts.net
 ```
 
 and redeploy. The site's live stats and sign-up form and the map's live
-feed then call the Mac. The Python function under `/api/` on Vercel is
-unused in this setup (it answers "server misconfigured" unless you also
-configure the Vercel mode described in `server/README.md`).
+feed then call the Mac, and the map stops showing demo data. Remember to add
+the Vercel domain to `SKYNET_CORS_ORIGINS` in `server/.env`.
 
 ## 9. Check capacity on this machine
 

@@ -1,6 +1,9 @@
 """Vercel Python Function: the SKY-NET HTTP API (``/api/*``).
 
-``vercel.json`` rewrites every ``/api/...`` request to this function. The
+Opt-in: the default Vercel project is static-only (site + map). Running
+``scripts/enable-vercel-api.sh`` copies this file to ``api/index.py`` at the
+repository root, next to ``requirements.txt``, ``.python-version`` and a
+``vercel.json`` that rewrites every ``/api/...`` request to this function. The
 original path is what reaches the ASGI app, so the FastAPI routes match
 exactly as in standalone mode.
 
@@ -22,7 +25,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent.parent
+# The repository root is the nearest ancestor holding the server package, so
+# this file works both where it is deployed (api/) and where it is kept
+# (deploy/vercel-api/api/).
+_ROOT = next(p for p in Path(__file__).resolve().parents if (p / "server" / "skynet_server").is_dir())
 for _package_dir in (_ROOT / "server", _ROOT / "common"):
     if str(_package_dir) not in sys.path:
         sys.path.insert(0, str(_package_dir))

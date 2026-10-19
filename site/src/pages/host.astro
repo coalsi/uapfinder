@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import { links, PRICES_AS_OF } from "../config";
+import { links, PRICES_AS_OF, sitePath } from "../config";
 
 const description =
   "Host a UAP Finder node: who makes a good host, a researched parts list with approximate prices, estimated power and bandwidth use, and an overview of setup.";
@@ -88,7 +88,7 @@ const parts: Part[] = [
         stereo pairs with its neighbours, and the most valuable sites are often where nobody else is watching.
       </p>
       <div class="btn-row">
-        <a class="btn btn-primary" href="/get-involved/#signup">Register your interest</a>
+        <a class="btn btn-primary" href={sitePath("/get-involved/#signup")}>Register your interest</a>
         <a class="btn btn-secondary" href={links.coverageMap}>See where nodes are needed</a>
       </div>
       <nav aria-label="On this page">
@@ -137,7 +137,7 @@ const parts: Part[] = [
           <h3>Permission</h3>
           <p>
             Your own property, or consent from your landlord or homeowners' association, and local rules that allow a
-            small outdoor camera. See the <a href="/faq/#legal">FAQ on legality and neighbours</a>.
+            small outdoor camera. See the <a href={sitePath("/faq/#legal")}>FAQ on legality and neighbours</a>.
           </p>
         </article>
         <article class="card">
@@ -166,7 +166,7 @@ const parts: Part[] = [
           A complete node built from these parts costs roughly <strong>$700–1,000</strong> before tax and shipping.
           Prices are approximate, in US dollars, as of {PRICES_AS_OF}, and have been volatile during 2026; check
           current listings before buying. Examples are illustrations, not endorsements; any equivalent part works.
-          <a href={`${links.repo}/blob/main/site/SOURCES.md`}>Sources for these prices</a>.
+          <a href={links.priceSources}>Sources for these prices</a>.
         </p>
       </div>
       <div class="table-wrap" tabindex="0" role="region" aria-labelledby="parts-caption">
@@ -211,7 +211,7 @@ const parts: Part[] = [
       </div>
       <div class="callout callout--star">
         <p>
-          <strong>Register before you buy.</strong> Spacing matters. <a href="/get-involved/#signup">Tell us roughly
+          <strong>Register before you buy.</strong> Spacing matters. <a href={sitePath("/get-involved/#signup")}>Tell us roughly
           where you are</a> and check the <a href={links.coverageMap}>coverage map</a> first, so your node will have a
           stereo partner within 5–40 miles.
         </p>
@@ -345,7 +345,10 @@ const parts: Part[] = [
             <p>Mount the node outdoors and confirm it appears, online, on the live map.</p>
           </li>
         </ol>
-        <p><a class="btn btn-secondary" href={links.edgeReadme}>Read the edge setup guide</a></p>
+        <p class="btn-row">
+          <a class="btn btn-primary" href={sitePath("/download/#node")}>Download and set up</a>
+          <a class="btn btn-secondary" href={links.edgeReadme}>Read the edge setup guide</a>
+        </p>
       </div>
       <aside class="card" aria-labelledby="dontneed-title">
         <h3 id="dontneed-title">What you don't need</h3>

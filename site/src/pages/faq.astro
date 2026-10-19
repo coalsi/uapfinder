@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import { CONTACT_EMAIL, links, PRICES_AS_OF } from "../config";
+import { CONTACT_EMAIL, links, PRICES_AS_OF, sitePath } from "../config";
 
 const description =
   "Answers about UAP Finder: what it does and doesn't claim, legality and neighbours' privacy, what data leaves your home, accuracy, cost, power, bandwidth, clips and how to leave.";
@@ -55,17 +55,17 @@ const items: Item[] = [
     id: "accuracy",
     q: "How accurate is it?",
     a: `<p>It depends mostly on how precisely each camera's pointing is known and on the geometry. With star-calibrated cameras (about 0.05° pointing error), the error model predicts a 3D position error of roughly <strong>20–30 m</strong> for an object at 10 km altitude seen by nodes 5–20 miles apart, about 80 m at 40 miles, and about 270 m at 80 miles, where the object is only 8° above both horizons. With uncalibrated pointing (about 1°) errors grow to hundreds of metres.</p>
-<p>Every published position carries its own estimate (<code>sigma_m</code>). These figures are model predictions checked in simulation and not yet verified in the field. Details are on <a href="/how-it-works/#accuracy">How it works</a>.</p>`,
+<p>Every published position carries its own estimate (<code>sigma_m</code>). These figures are model predictions checked in simulation and not yet verified in the field. Details are on <a href="${sitePath("/how-it-works/#accuracy")}">How it works</a>.</p>`,
   },
   {
     id: "cost",
     q: "How much does a node cost?",
-    a: `<p>Roughly <strong>$700–1,000</strong> in parts as of ${PRICES_AS_OF}, before tax and shipping. The largest item is the NVIDIA Jetson Orin Nano Super Developer Kit, at a list price of about $399 after NVIDIA's July 2026 price increase. See the <a href="/host/#cost">parts list</a>; prices have been volatile.</p>`,
+    a: `<p>Roughly <strong>$700–1,000</strong> in parts as of ${PRICES_AS_OF}, before tax and shipping. The largest item is the NVIDIA Jetson Orin Nano Super Developer Kit, at a list price of about $399 after NVIDIA's July 2026 price increase. See the <a href="${sitePath("/host/#cost")}">parts list</a>; prices have been volatile.</p>`,
   },
   {
     id: "power",
     q: "How much power and bandwidth does it use?",
-    a: `<p>We estimate <strong>15–30 W</strong> on average, about 130–260 kWh a year, or roughly $24–48 a year at the 2026 US average residential electricity price. Idle traffic is about 5 MB a day over UDP or about 50 MB a day over HTTPS, plus about 5 KB/s per tracked object and 5–25 MB per requested clip. These are estimates from the hardware's power modes and the protocol's message sizes, not field measurements; see <a href="/host/#power">power</a> and <a href="/host/#bandwidth">bandwidth</a>.</p>`,
+    a: `<p>We estimate <strong>15–30 W</strong> on average, about 130–260 kWh a year, or roughly $24–48 a year at the 2026 US average residential electricity price. Idle traffic is about 5 MB a day over UDP or about 50 MB a day over HTTPS, plus about 5 KB/s per tracked object and 5–25 MB per requested clip. These are estimates from the hardware's power modes and the protocol's message sizes, not field measurements; see <a href="${sitePath("/host/#power")}">power</a> and <a href="${sitePath("/host/#bandwidth")}">bandwidth</a>.</p>`,
   },
   {
     id: "conditions",
@@ -82,7 +82,7 @@ const items: Item[] = [
     id: "leave",
     q: "How do I stop participating or delete my data?",
     a: `<p><strong>To stop hosting</strong>, switch the node off or stop its software. It drops out of the active network within about a minute; it is no longer counted once it has been silent for 60 seconds.</p>
-<p><strong>To delete your interest-form entry, or ask about your node's records</strong>, ${contact}. We will verify the request and delete the entry. See the <a href="/privacy/">privacy notice</a>.</p>`,
+<p><strong>To delete your interest-form entry, or ask about your node's records</strong>, ${contact}. We will verify the request and delete the entry. See the <a href="${sitePath("/privacy/")}">privacy notice</a>.</p>`,
   },
   {
     id: "data-use",

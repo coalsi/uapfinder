@@ -1,11 +1,11 @@
 ---
 import Logo from "./Logo.astro";
-import { CONTACT_EMAIL, links, SITE_NAME } from "../config";
+import { CONTACT_EMAIL, links, SITE_NAME, sitePath } from "../config";
 ---
 <footer class="site-footer">
   <div class="wrap footer-grid">
     <div class="footer-about">
-      <a class="brand" href="/">
+      <a class="brand" href={sitePath("/")}>
         <Logo size={28} />
         <span>{SITE_NAME}</span>
       </a>
@@ -18,10 +18,11 @@ import { CONTACT_EMAIL, links, SITE_NAME } from "../config";
     <nav aria-label="Project">
       <h2>Project</h2>
       <ul>
-        <li><a href="/how-it-works/">How it works</a></li>
-        <li><a href="/host/">Host a node</a></li>
-        <li><a href="/get-involved/">Get involved</a></li>
-        <li><a href="/faq/">FAQ</a></li>
+        <li><a href={sitePath("/how-it-works/")}>How it works</a></li>
+        <li><a href={sitePath("/host/")}>Host a node</a></li>
+        <li><a href={sitePath("/get-involved/")}>Get involved</a></li>
+        <li><a href={sitePath("/download/")}>Download and set up</a></li>
+        <li><a href={sitePath("/faq/")}>FAQ</a></li>
         <li><a href={links.map}>Live map</a></li>
       </ul>
     </nav>
@@ -38,7 +39,7 @@ import { CONTACT_EMAIL, links, SITE_NAME } from "../config";
     <div>
       <h2>Privacy</h2>
       <ul>
-        <li><a href="/privacy/">Privacy notice</a></li>
+        <li><a href={sitePath("/privacy/")}>Privacy notice</a></li>
         {
           CONTACT_EMAIL && (
             <li>

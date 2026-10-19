@@ -1,19 +1,20 @@
 ---
 import Logo from "./Logo.astro";
-import { links, SITE_NAME } from "../config";
+import { links, SITE_NAME, sitePath } from "../config";
 
 const nav = [
-  { href: "/how-it-works/", label: "How it works" },
-  { href: "/host/", label: "Host a node" },
-  { href: "/get-involved/", label: "Get involved" },
-  { href: "/faq/", label: "FAQ" },
+  { href: sitePath("/how-it-works/"), label: "How it works" },
+  { href: sitePath("/host/"), label: "Host a node" },
+  { href: sitePath("/get-involved/"), label: "Get involved" },
+  { href: sitePath("/download/"), label: "Download" },
+  { href: sitePath("/faq/"), label: "FAQ" },
 ];
 
 const path = Astro.url.pathname.endsWith("/") ? Astro.url.pathname : `${Astro.url.pathname}/`;
 ---
 <header class="site-header" data-site-header>
   <div class="wrap header-inner">
-    <a class="brand" href="/" aria-label={`${SITE_NAME} home`}>
+    <a class="brand" href={sitePath("/")} aria-label={`${SITE_NAME} home`}>
       <Logo size={30} />
       <span class="brand-name">{SITE_NAME}</span>
     </a>

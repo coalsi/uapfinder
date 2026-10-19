@@ -19,8 +19,20 @@ function resolveSite() {
   return "http://localhost:5180";
 }
 
+/**
+ * Path the site is served under: "/" (Vercel, any root host) or a
+ * sub-path such as "/uapfinder/" for a GitHub Pages project site. Internal
+ * links go through `sitePath()` in src/config.ts so they follow it.
+ */
+function resolveBase() {
+  const base = process.env.PUBLIC_BASE_PATH?.trim();
+  if (!base || base === "/") return "/";
+  return `/${base.replace(/^\/+|\/+$/g, "")}/`;
+}
+
 export default defineConfig({
   site: resolveSite(),
+  base: resolveBase(),
   output: "static",
   trailingSlash: "ignore",
   build: {

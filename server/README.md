@@ -5,7 +5,7 @@ SKY-NET (UAP Finder). One codebase runs two ways:
 
 | | standalone (primary) | vercel (alternative) |
 |---|---|---|
-| Entry | `skynet-server serve` (uvicorn + UDP on one event loop) | `api/index.py` (Vercel Python Function) |
+| Entry | `skynet-server serve` (uvicorn + UDP on one event loop) | `api/index.py` (Vercel Python Function, from `deploy/vercel-api/`) |
 | Node ingest | UDP `:9999` and `POST /api/v1/ingest` | `POST /api/v1/ingest` only |
 | Back-signal | UDP datagram to the node's last source address (or command queue) | command queue (ingest response / `GET .../commands`) |
 | State | `memory` (fastest, one process) or `redis` | `redis` (Upstash) |
@@ -155,11 +155,17 @@ all of them with defaults. The essentials:
 
 ## Deploy on Vercel
 
-The same repository also hosts the website (`/`) and dashboard (`/map/`);
-`vercel.json` routes `/api/*` to `api/index.py`.
+The same Vercel project hosts the website (`/`) and dashboard (`/map/`),
+static only by default ([docs/DEPLOY_VERCEL.md](../docs/DEPLOY_VERCEL.md)).
+The API is opt-in: its files live in `deploy/vercel-api/`, and
+`scripts/enable-vercel-api.sh` copies `api/index.py`, `requirements.txt`,
+`.python-version` and a `vercel.json` that routes `/api/*` to the function
+to the repository root.
 
-1. Import the GitHub repository as a Vercel project (the coordinator's
-   build settings serve `site/` and `dashboard/`).
+1. Import the GitHub repository as one Vercel project (repository root), run
+   `scripts/enable-vercel-api.sh` and commit the copied files. With
+   `api/index.py` present, `scripts/build-web.sh` builds the map against the
+   same-origin API instead of demo data.
 2. Marketplace: add **Upstash for Redis** (injects `REDIS_URL` / `KV_URL`)
    and **Neon** Postgres (injects `DATABASE_URL`, `DATABASE_URL_UNPOOLED`).
    Neon supports PostGIS; the first migration runs `CREATE EXTENSION postgis`.

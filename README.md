@@ -46,7 +46,7 @@ wire format in [docs/PROTOCOL.md](docs/PROTOCOL.md); the HTTP API in
 | `site/` | Public website (Astro), served at `/` | [site/README.md](site/README.md) |
 | `tools/simulate_network.py` | Virtual nodes with ground-truth targets, scores the server's tracks | |
 | `deploy/` | Mac Studio + Tailscale guide, Docker image | [deploy/mac-studio/README.md](deploy/mac-studio/README.md) |
-| `scripts/build-web.sh` | Builds site + map into `site/dist` (the Vercel build) | |
+| `scripts/build-web.sh` | Builds site + map into `site/dist` (the Vercel build) | [DEPLOY_VERCEL.md](docs/DEPLOY_VERCEL.md) |
 
 ## Try it locally
 
@@ -79,11 +79,14 @@ angular noise):
 |--------|-----------------|-------|
 | **Mac Studio + Tailscale + Vercel** (planned) | Server and PostGIS on a Mac at home; nodes reach it over Tailscale (UDP); site and map on Vercel call its API through Tailscale Funnel. No router ports opened. | [deploy/mac-studio](deploy/mac-studio/README.md) |
 | Linux VPS | `docker compose up -d --build` (server + PostGIS); site and map on Vercel or any static host | [docker-compose.yml](docker-compose.yml) |
-| Vercel only (small pilot) | Site, map and the API as a Vercel Function with Upstash Redis and Neon Postgres; nodes use HTTPS (Vercel cannot receive UDP) | [server/README.md](server/README.md#deploy-on-vercel) |
+| Vercel only (small pilot) | Site, map and the API as a Vercel Function with Upstash Redis and Neon Postgres; nodes use HTTPS (Vercel cannot receive UDP). Opt in with `scripts/enable-vercel-api.sh`. | [server/README.md](server/README.md#deploy-on-vercel) |
 
-For the Vercel parts, import this GitHub repository as a project:
-`vercel.json` builds the site at `/` and the map at `/map/`. Set
-`UAPF_API_BASE` to the server's public URL when the API runs elsewhere.
+**Website and map on Vercel:** import this repository as **one** project with
+the repository root as its Root Directory; `vercel.json` builds the site at
+`/` and the map at `/map/` (static only). Step-by-step, including what to do
+when Vercel reports multiple projects: [docs/DEPLOY_VERCEL.md](docs/DEPLOY_VERCEL.md).
+Set `UAPF_API_BASE` to the server's public URL once it is running; until
+then the map shows labelled demo data.
 
 ## Status
 

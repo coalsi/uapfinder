@@ -286,6 +286,13 @@ hr {
   align-items: center;
 }
 
+/* Grid items default to min-width: auto, so a wide <pre> or table would
+   stretch its column past the viewport instead of scrolling inside itself. */
+.grid > *,
+.split > * {
+  min-width: 0;
+}
+
 @media (min-width: 760px) {
   .grid-2x2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));

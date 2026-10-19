@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { COUNTRY_CODES, countryOptions, isCountryCode } from "../../src/lib/countries";
-import { apiUrl, trimTrailingSlashes, withQuery } from "../../src/lib/urls";
+import { apiUrl, joinBase, trimTrailingSlashes, withQuery } from "../../src/lib/urls";
 
 describe("urls", () => {
+  it("joinBase puts site paths under the deployment base path", () => {
+    expect(joinBase("/", "/host/")).toBe("/host/");
+    expect(joinBase("/", "/")).toBe("/");
+    expect(joinBase("/uapfinder/", "/host/#cost")).toBe("/uapfinder/host/#cost");
+    expect(joinBase("/uapfinder", "map/")).toBe("/uapfinder/map/");
+    expect(joinBase("/uapfinder/", "/")).toBe("/uapfinder/");
+  });
+
   it("withQuery appends to plain, queried and fragment URLs", () => {
     expect(withQuery("/map/", { layer: "coverage" })).toBe("/map/?layer=coverage");
     expect(withQuery("https://x.org/map?demo=1", { layer: "coverage" })).toBe("https://x.org/map?demo=1&layer=coverage");

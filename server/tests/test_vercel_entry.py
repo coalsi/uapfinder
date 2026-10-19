@@ -1,4 +1,5 @@
-"""The Vercel entrypoint (api/index.py), its requirements and vercel.json."""
+"""The opt-in Vercel API (deploy/vercel-api: api/index.py, requirements, vercel.json)
+and the default static-only root vercel.json."""
 
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from skynet_server import sim
 from .conftest import MASTER_KEY
 
 ROOT = Path(__file__).resolve().parents[2]
+VERCEL_API = ROOT / "deploy" / "vercel-api"
 HTTP_PORT = 8101
 
 
@@ -35,21 +37,31 @@ def test_requirements_cover_runtime_dependencies():
         deps = tomllib.loads((ROOT / pkg / "pyproject.toml").read_text())["project"]["dependencies"]
         needed |= _names(deps)
     needed -= {"skynet-common", "uvicorn"}  # imported from source / provided by the Vercel runtime
-    have = _names((ROOT / "requirements.txt").read_text().splitlines())
+    have = _names((VERCEL_API / "requirements.txt").read_text().splitlines())
     assert needed <= have, needed - have
 
 
 def test_vercel_json_routes_api_to_the_function():
-    cfg = json.loads((ROOT / "vercel.json").read_text())
+    cfg = json.loads((VERCEL_API / "vercel.json").read_text())
     fn = cfg["functions"]["api/index.py"]
     assert fn["maxDuration"] <= 300 and len(fn["excludeFiles"]) <= 256  # Hobby limit; schema maxLength
     assert {"source": "/api/(.*)", "destination": "/api/index"} in cfg["rewrites"]
-    assert (ROOT / ".python-version").read_text().strip() in ("3.12", "3.13", "3.14")
+    assert (VERCEL_API / ".python-version").read_text().strip() in ("3.12", "3.13", "3.14")
+    # The API variant still builds the site and map, like the default.
+    default = json.loads((ROOT / "vercel.json").read_text())
+    assert {k: cfg[k] for k in default} == default
+
+
+def test_default_vercel_project_is_static_only():
+    cfg = json.loads((ROOT / "vercel.json").read_text())
+    assert set(cfg) == {"$schema", "buildCommand", "outputDirectory"}
+    # No api/ directory: Vercel would otherwise deploy it as functions.
+    assert not (ROOT / "api").exists() and not (ROOT / "requirements.txt").exists()
 
 
 def _serve(env: dict) -> subprocess.Popen:
     proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "api.index:app", "--port", str(HTTP_PORT),
-                             "--log-level", "warning"], cwd=ROOT, env=env, stdout=subprocess.PIPE,
+                             "--log-level", "warning"], cwd=VERCEL_API, env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT)
     for _ in range(100):
         try:

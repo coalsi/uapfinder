@@ -2,7 +2,7 @@
 import "../styles/global.css";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
-import { SITE_NAME } from "../config";
+import { SITE_NAME, sitePath } from "../config";
 
 interface Props {
   /** Page title without the site name (omit on the home page). */
@@ -19,7 +19,7 @@ const { title, description, noindex = false, jsonLd, ogType = "website" } = Astr
 const fullTitle = title ? `${title} · ${SITE_NAME}` : `${SITE_NAME}: triangulating unidentified aerial objects`;
 const site = Astro.site ?? new URL("http://localhost:5180");
 const canonical = new URL(Astro.url.pathname, site).href;
-const ogImage = new URL("/og.png", site).href;
+const ogImage = new URL(sitePath("/og.png"), site).href;
 ---
 <!doctype html>
 <html lang="en">
@@ -31,10 +31,10 @@ const ogImage = new URL("/og.png", site).href;
     {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
     <meta name="theme-color" content="#060a13" />
     <meta name="color-scheme" content="dark" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="sitemap" href="/sitemap.xml" />
+    <link rel="icon" href={sitePath("/favicon.svg")} type="image/svg+xml" />
+    <link rel="icon" href={sitePath("/favicon-32.png")} sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href={sitePath("/apple-touch-icon.png")} />
+    <link rel="sitemap" href={sitePath("/sitemap.xml")} />
 
     <meta property="og:site_name" content={SITE_NAME} />
     <meta property="og:type" content={ogType} />

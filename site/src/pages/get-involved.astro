@@ -1,7 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import VolunteerForm from "../components/VolunteerForm.astro";
-import { links } from "../config";
+import { links, sitePath } from "../config";
 
 const description =
   "Register interest in hosting a UAP Finder node, contribute code to the open-source edge, server, map and website, or help analyse the public data.";
@@ -31,7 +31,7 @@ const description =
           <li>Publicly, volunteers are only ever shown as counts per 1° × 1° area, and only where there are at least 3.</li>
           <li>Submitting again with the same email updates your entry.</li>
         </ul>
-        <p class="small"><a href="/privacy/">Read the privacy notice</a> for what we store, who can see it and how to delete it.</p>
+        <p class="small"><a href={sitePath("/privacy/")}>Read the privacy notice</a> for what we store, who can see it and how to delete it.</p>
       </div>
       <VolunteerForm />
     </div>

@@ -1,0 +1,403 @@
+---
+import Base from "../layouts/Base.astro";
+import { downloads, links, REPO_URL, sitePath } from "../config";
+
+const description =
+  "Download the UAP Finder software and set it up: the camera node for a Jetson Orin Nano, the server on a Mac or Linux machine, and a simulator to try it without hardware.";
+
+interface Part {
+  path: string;
+  what: string;
+  who: string;
+  guide: string;
+  guideLabel: string;
+}
+
+const contents: Part[] = [
+  {
+    path: "edge/",
+    what: "Camera-node software for the Jetson: detection, tracking, filters, uplink, setup script and system service",
+    who: "Node hosts",
+    guide: links.edgeGuide,
+    guideLabel: "Edge guide",
+  },
+  {
+    path: "server/",
+    what: "Ingest, matching, triangulation, 3D tracks, clip requests, database and HTTP API",
+    who: "Network coordinators",
+    guide: links.serverGuide,
+    guideLabel: "Server guide",
+  },
+  {
+    path: "deploy/",
+    what: "Running the server on a Mac Studio with Tailscale, and a Docker setup for Linux",
+    who: "Network coordinators",
+    guide: links.macStudioGuide,
+    guideLabel: "Mac Studio guide",
+  },
+  {
+    path: "common/",
+    what: "Shared geometry, triangulation and the signed message format (installed automatically)",
+    who: "Everyone",
+    guide: links.mathDoc,
+    guideLabel: "Error model",
+  },
+  {
+    path: "tools/",
+    what: "A simulated network with known targets that scores the server's tracks",
+    who: "Testers",
+    guide: `${REPO_URL}/blob/HEAD/tools/simulate_network.py`,
+    guideLabel: "Simulator",
+  },
+  {
+    path: "dashboard/, site/",
+    what: "The live 3D map and this website",
+    who: "Developers",
+    guide: links.dashboardCode,
+    guideLabel: "Map code",
+  },
+];
+
+const nodeInstall = `sudo apt-get update && sudo apt-get install -y git
+git clone ${REPO_URL}.git
+cd uapfinder
+sudo SKYNET_NODE_ID=<your node id> SKYNET_NODE_KEY=<your node key> \\
+     SKYNET_SERVER_HOST=<server host name> TS_AUTHKEY=<Tailscale key, if used> \\
+     ./edge/deploy/jetson/setup.sh`;
+
+const nodeCheck = `journalctl -u skynet-edge -f        # live status, a line every minute
+sudo -u skynet /opt/skynet/venv/bin/skynet-edge bench --config /etc/skynet/edge.yaml`;
+
+const macServer = `brew install python@3.13 postgresql@17 postgis
+git clone ${REPO_URL}.git && cd uapfinder
+python3.13 -m venv server/.venv
+server/.venv/bin/pip install -e ./common -e ./server
+cp server/.env.example server/.env        # set the keys and addresses (see the guide)
+server/.venv/bin/skynet-server --env-file server/.env migrate
+server/.venv/bin/skynet-server --env-file server/.env serve`;
+
+const dockerServer = `git clone ${REPO_URL}.git && cd uapfinder
+cp server/.env.example server/.env        # set SKYNET_MASTER_KEY, SKYNET_ADMIN_TOKEN,
+                                          # SKYNET_PUBLIC_URL (openssl rand -hex 32 makes a key)
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
+docker compose up -d --build`;
+
+const simulate = `git clone ${REPO_URL}.git && cd uapfinder
+python3 -m venv .venv && .venv/bin/pip install -e ./common -e ./server
+export SKYNET_MASTER_KEY=$(.venv/bin/skynet-server keygen) SKYNET_ADMIN_TOKEN=$(openssl rand -hex 24)
+export SKYNET_PUBLIC_URL=http://127.0.0.1:8000
+.venv/bin/skynet-server serve &
+.venv/bin/python tools/simulate_network.py --udp 127.0.0.1:9999 \\
+    --api http://127.0.0.1:8000 --master-key "$SKYNET_MASTER_KEY" --duration 30`;
+---
+<Base title="Download and set up" description={description}>
+  <header class="page-hero">
+    <div class="wrap">
+      <p class="eyebrow">Download</p>
+      <h1>Get the software</h1>
+      <p class="lead">
+        Everything UAP Finder runs is in one open repository: the camera-node software, the server that triangulates,
+        the live map and this website. Download it, then follow the steps for your role.
+      </p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href={downloads.zip} data-download="zip">Download ZIP</a>
+        <a class="btn btn-secondary" href={REPO_URL}>View on GitHub</a>
+      </div>
+      <p class="small muted alt-downloads">
+        Also as a <a href={downloads.tarball}>.tar.gz archive</a>, or with git:
+        <code>{downloads.clone}</code>
+      </p>
+      <nav aria-label="On this page">
+        <ul class="toc">
+          <li><a href="#contents">What's inside</a></li>
+          <li><a href="#node">Set up a node</a></li>
+          <li><a href="#server">Run the server</a></li>
+          <li><a href="#try">Try it without hardware</a></li>
+          <li><a href="#requirements">Requirements</a></li>
+          <li><a href="#third-party">Other downloads</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <section class="section section--tight" aria-label="Software status">
+    <div class="wrap">
+      <div class="callout callout--warn">
+        <p>
+          <strong>Early software.</strong> It is built and tested in simulation, and the server has been run end to
+          end with a simulated network. The camera, GPS, orientation-sensor and Jetson image steps were written from
+          the manufacturers' documentation and have not yet been run on a real device. Expect some troubleshooting, and
+          please <a href={links.issues}>report what you find</a>.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="contents" class="section anchor-section" aria-labelledby="contents-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="contents-title">What's inside the download</h2>
+        <p>One archive holds every part. Most people only need one folder and its guide.</p>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="contents-caption">
+        <table class="table-stack contents">
+          <caption id="contents-caption">Folders in the repository and who uses them</caption>
+          <thead>
+            <tr>
+              <th scope="col">Folder</th>
+              <th scope="col">What it is</th>
+              <th scope="col">For</th>
+              <th scope="col">Guide</th>
+            </tr>
+          </thead>
+          <tbody>
+            {
+              contents.map((c) => (
+                <tr>
+                  <th scope="row"><code>{c.path}</code></th>
+                  <td data-label="What it is">{c.what}</td>
+                  <td data-label="For">{c.who}</td>
+                  <td data-label="Guide"><a href={c.guide}>{c.guideLabel}</a></td>
+                </tr>
+              ))
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="node" class="section anchor-section" aria-labelledby="node-title">
+    <div class="wrap split split--wide-left split--top">
+      <div>
+        <h2 id="node-title">Set up a camera node</h2>
+        <p>
+          For hosts with a Jetson Orin Nano developer kit, a camera and a GPS receiver. The full walkthrough, wiring
+          and calibration are in the <a href={links.edgeGuide}>edge guide</a>.
+        </p>
+        <ol class="steps">
+          <li>
+            <h3>Check the parts and your spacing</h3>
+            <p>
+              Use the <a href={sitePath("/host/#cost")}>parts list</a>, and
+              <a href={sitePath("/get-involved/#signup")}>register your interest</a> so your node will have a stereo
+              partner 5–40 miles away.
+            </p>
+          </li>
+          <li>
+            <h3>Update the board's firmware, once</h3>
+            <p>
+              A factory-fresh developer kit cannot boot JetPack 6 until its firmware is updated. Write NVIDIA's
+              JetPack 5.1.3 SD-card image with Etcher, boot it once to update the firmware, then continue.
+              <a href={links.jetsonImageGuide}>Image guide</a>.
+            </p>
+          </li>
+          <li>
+            <h3>Install JetPack 6.2</h3>
+            <p>
+              Write NVIDIA's JetPack 6.2 SD-card image for the Orin Nano developer kit, boot it and finish Ubuntu's
+              first-run setup. JetPack 6.2 also enables the faster "Super" power modes.
+            </p>
+          </li>
+          <li>
+            <h3>Get your node ID and key</h3>
+            <p>
+              The network coordinator registers your node and sends you a node ID and key, plus a Tailscale key if the
+              network uses Tailscale. Keep the node key private.
+            </p>
+          </li>
+          <li>
+            <h3>Download and install the node software</h3>
+            <p>On the Jetson, in a terminal:</p>
+          </li>
+        </ol>
+        <pre tabindex="0"><code>{nodeInstall}</code></pre>
+        <p class="small muted">
+          The script installs GPS time sync (gpsd, chrony), video tools, a <code>skynet</code> service account and the
+          node software, writes <code>/etc/skynet/edge.yaml</code> and starts the <code>skynet-edge</code> service.
+        </p>
+        <ol class="steps" start="6" style="counter-reset: step 5">
+          <li>
+            <h3>Configure and calibrate</h3>
+            <p>
+              Edit <code>/etc/skynet/edge.yaml</code> for your camera, GPS and ADS-B source, then calibrate the lens and
+              solve the camera's pointing from the stars on a clear night.
+              <a href={`${links.edgeGuide}#calibration`}>Calibration steps</a>.
+            </p>
+          </li>
+          <li>
+            <h3>Check that it works</h3>
+            <p>Watch the service and run the on-device benchmark (it must sustain 60 fps at 1080p):</p>
+          </li>
+        </ol>
+        <pre tabindex="0"><code>{nodeCheck}</code></pre>
+        <p class="small muted">Once it is sending heartbeats, your node appears on the <a href={links.map}>live map</a>.</p>
+      </div>
+      <aside class="card" aria-labelledby="node-files-title">
+        <h3 id="node-files-title">Files you'll use</h3>
+        <ul>
+          <li><a href={links.edgeGuide}>Edge guide</a>: install, configuration, calibration and checks</li>
+          <li><a href={links.exampleConfig}>Example configuration</a></li>
+          <li><a href={links.jetsonImageGuide}>Jetson image guide</a>: SD card and custom images</li>
+          <li><a href={`${REPO_URL}/blob/HEAD/edge/deploy/jetson/setup.sh`}>Setup script</a></li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <section id="server" class="section anchor-section" aria-labelledby="server-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="server-title">Run the server</h2>
+        <p>
+          For network coordinators. One server collects every node's sightings, triangulates them and serves the
+          live map. Nodes reach it over Tailscale (no open router ports) or over the internet.
+        </p>
+      </div>
+      <div class="grid grid-2">
+        <article class="card">
+          <h3>On a Mac (Mac Studio)</h3>
+          <p>
+            The planned setup: the server and database on a Mac at home, nodes connected over Tailscale, and the public
+            API published with Tailscale Funnel. <a href={links.macStudioGuide}>Mac Studio guide</a>.
+          </p>
+          <pre tabindex="0"><code>{macServer}</code></pre>
+        </article>
+        <article class="card">
+          <h3>On a Linux server (Docker)</h3>
+          <p>
+            The server and PostGIS database in containers, for a VPS or a spare machine. Put HTTPS in front of port 8000
+            for public access. <a href={links.serverGuide}>Server guide</a>.
+          </p>
+          <pre tabindex="0"><code>{dockerServer}</code></pre>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="try" class="section anchor-section" aria-labelledby="try-title">
+    <div class="wrap split split--wide-left split--top">
+      <div>
+        <h2 id="try-title">Try it without hardware</h2>
+        <p>
+          A simulated network of six cameras watches three objects with known paths, including a Mach 6 one. It
+          sends real signed messages to a local server, then scores the server's 3D tracks against the truth. You
+          need Python 3.10 or later.
+        </p>
+        <pre tabindex="0"><code>{simulate}</code></pre>
+        <p class="small muted">
+          Expect median position errors of roughly 10–20 m, and the hypersonic and high-g objects flagged as such.
+        </p>
+      </div>
+      <aside class="card" aria-labelledby="demo-title">
+        <h3 id="demo-title">Or just look</h3>
+        <p>The live map has a built-in demo network around Phoenix, Arizona, clearly labelled as demo data.</p>
+        <p><a class="btn btn-secondary" href={links.map}>Open the live map</a></p>
+      </aside>
+    </div>
+  </section>
+
+  <section id="requirements" class="section anchor-section" aria-labelledby="req-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="req-title">Requirements</h2>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="req-caption">
+        <table class="table-stack">
+          <caption id="req-caption">Software requirements by component</caption>
+          <thead>
+            <tr>
+              <th scope="col">Component</th>
+              <th scope="col">Runs on</th>
+              <th scope="col">Needs</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Camera node</th>
+              <td data-label="Runs on">Jetson Orin Nano 8 GB developer kit</td>
+              <td data-label="Needs">JetPack 6.x (Ubuntu 22.04, Python 3.10), NVMe SSD, camera, GPS with PPS</td>
+            </tr>
+            <tr>
+              <th scope="row">Server</th>
+              <td data-label="Runs on">macOS or Linux</td>
+              <td data-label="Needs">Python 3.10+ (3.12 or 3.13 recommended), PostgreSQL 16–18 with PostGIS 3</td>
+            </tr>
+            <tr>
+              <th scope="row">Simulator</th>
+              <td data-label="Runs on">macOS, Linux or Windows (WSL)</td>
+              <td data-label="Needs">Python 3.10+</td>
+            </tr>
+            <tr>
+              <th scope="row">Map and website (building)</th>
+              <td data-label="Runs on">Any</td>
+              <td data-label="Needs">Node.js 22</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="third-party" class="section anchor-section" aria-labelledby="tp-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="tp-title">Other downloads you may need</h2>
+        <p>These come from their makers, not from this project.</p>
+      </div>
+      <div class="grid grid-3">
+        <article class="card">
+          <h3>NVIDIA JetPack</h3>
+          <p>The Jetson's operating system, including the SD-card images for the Orin Nano developer kit.</p>
+          <p><a href="https://developer.nvidia.com/embedded/jetpack">JetPack downloads</a> ·
+            <a href="https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit">Getting started</a></p>
+        </article>
+        <article class="card">
+          <h3>balenaEtcher</h3>
+          <p>Writes the JetPack image to a microSD card from macOS, Windows or Linux.</p>
+          <p><a href="https://etcher.balena.io/">Download Etcher</a></p>
+        </article>
+        <article class="card">
+          <h3>Tailscale</h3>
+          <p>Private network between the nodes and the server, with no open router ports.</p>
+          <p><a href="https://tailscale.com/download">Download Tailscale</a></p>
+        </article>
+        <article class="card">
+          <h3>Homebrew</h3>
+          <p>Installs Python, PostgreSQL and PostGIS on a Mac running the server.</p>
+          <p><a href="https://brew.sh/">Install Homebrew</a></p>
+        </article>
+        <article class="card">
+          <h3>Docker</h3>
+          <p>Runs the server and database in containers on Linux.</p>
+          <p><a href="https://docs.docker.com/engine/install/">Install Docker Engine</a></p>
+        </article>
+        <article class="card">
+          <h3>Python and Node.js</h3>
+          <p>For running the server or simulator, and for building the map and website yourself.</p>
+          <p><a href="https://www.python.org/downloads/">Python</a> · <a href="https://nodejs.org/en/download">Node.js</a></p>
+        </article>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .alt-downloads code {
+    white-space: normal;
+    word-break: break-all;
+  }
+
+  .contents {
+    min-width: 720px;
+  }
+
+  .card pre {
+    margin: 14px 0 0;
+    font-size: 0.82rem;
+  }
+
+  pre {
+    white-space: pre;
+  }
+</style>
