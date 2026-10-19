@@ -79,7 +79,7 @@ that fired.
 
 | `type` | `data` |
 |--------|--------|
-| `triangulation` | `{"event_id", "track_id", "t_ns", "lat", "lon", "alt_m", "sigma_m", "error_margin_m", "parallax_deg", "rays": [{"node_id", "az_deg", "el_deg", "node_lat", "node_lon", "node_alt_m"}]}` (ray node positions are rounded like public Node positions) |
+| `triangulation` | `{"event_id", "track_id", "t_ns", "lat", "lon", "alt_m", "sigma_m", "error_margin_m", "parallax_deg", "rays": [{"node_id", "az_deg", "el_deg", "node_lat", "node_lon", "node_alt_m"}]}`. Ray node positions are rounded like public Node positions, and `az_deg`/`el_deg` are recomputed from that rounded position to the published point. The measured lines of sight are never published: back-projecting a few of them through their 3D points would locate a volunteer's camera to within metres. |
 | `track` | a Track without `points` |
 | `node` | a Node |
 | `clip` | `{"request_id", "event_id", "track_id", "node_id", "status": "requested" \| "uploaded" \| "failed", "download_url": null \| "…"}` |

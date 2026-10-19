@@ -505,11 +505,13 @@ const interests = [
     background: var(--surface);
   }
 
+  /* The summary items and status messages are created by the form script,
+     so they need :global() to receive these (otherwise scoped) styles. */
   .error-summary ul {
     margin: 0;
   }
 
-  .error-summary a {
+  .error-summary :global(a) {
     color: var(--err);
   }
 
@@ -517,17 +519,17 @@ const interests = [
     border-left-color: var(--warn);
   }
 
-  .form-status p,
+  .form-status :global(p),
   .form-success p {
     margin: 0 0 6px;
   }
 
-  .form-status p:last-child,
+  .form-status :global(p:last-child),
   .form-success p:last-child {
     margin-bottom: 0;
   }
 
-  .status-title {
+  :global(.signup) :global(.status-title) {
     font-weight: 650;
     color: var(--text);
     margin: 0 0 6px;
