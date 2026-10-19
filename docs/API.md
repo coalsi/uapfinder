@@ -196,5 +196,58 @@ steer rural deployment.
 
 `GET /api/v1/clips/{request_id}` (public) → `{"request_id", "event_id", "track_id", "node_id", "status", "download_url", "t_start_ns", "t_end_ns", "bytes"}`.
 
+### Volunteer sign-up
+
+The public website's "Host a node" interest form. Requires the database
+(responds `503` with `{"detail": "sign-up unavailable"}` when the server
+runs without one). Stores only what volunteers type in; exact street
+addresses are never requested.
+
+`POST /api/v1/volunteers` (public; rate-limited to 5 requests per hour per
+client IP; body at most 4 KB)
+```json
+{
+  "email": "jane@example.org",
+  "name": "Jane",
+  "country": "US",
+  "region": "Arizona",
+  "city": "Surprise",
+  "postal_code": "85374",
+  "approx_lat": 33.63,
+  "approx_lon": -112.37,
+  "site_type": "rooftop",
+  "has_hardware": "none",
+  "interests": ["host_node", "software"],
+  "notes": "Clear view to the south-west.",
+  "consent": true,
+  "website": ""
+}
+```
+Required: `email` (valid address, ≤254 chars), `country` (ISO 3166-1
+alpha-2), `consent` (must be `true`). Optional: `name` (≤100), `region`,
+`city` (≤100 each), `postal_code` (≤20), `approx_lat`/`approx_lon` (the
+server rounds them to 2 decimals, about 1 km, before storing),
+`site_type` (`rooftop` | `yard` | `rural_land` | `other`), `has_hardware`
+(`none` | `some` | `full`), `interests` (subset of `host_node`, `software`,
+`data_analysis`, `outreach`), `notes` (≤1000). `website` is a honeypot:
+humans leave it empty; non-empty submissions are silently discarded but
+still get `201`.
+
+Response `201`: `{"status": "received"}`. A repeat submission with the same
+email updates the earlier record and gets the same response, so the
+endpoint does not reveal who has signed up. Validation errors return `422`.
+
+`GET /api/v1/volunteers/summary` (public)
+```json
+{"total": 42, "cells": [{"lat": 33.5, "lon": -112.5, "count": 7}]}
+```
+Counts per 1° × 1° cell (cell centre given). Cells with fewer than 3
+volunteers are omitted so individuals cannot be located.
+
+`GET /api/v1/volunteers` (admin) → `{"volunteers": [{…all stored fields…, "id", "created_at", "updated_at"}]}`;
+`?format=csv` returns `text/csv`.
+
+`DELETE /api/v1/volunteers/{id}` (admin) → `204`, for removal requests.
+
 ### `GET /metrics`
 Prometheus text exposition of the counters behind `/stats` (standalone mode).
