@@ -32,6 +32,8 @@ export function createViewer(container: HTMLElement, config: AppConfig): Viewer 
         TileMapServiceImageryProvider.fromUrl(buildModuleUrl("Assets/Textures/NaturalEarthII"), {
           credit: NATURAL_EARTH_CREDIT,
         }),
+        // Night-friendly, like the tile layer below.
+        { brightness: 0.5, contrast: 1.1, saturation: 0.7 },
       );
 
   const viewer = new Viewer(container, {

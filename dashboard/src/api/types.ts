@@ -126,11 +126,12 @@ export interface EventsPage {
   cursor: string | null;
 }
 
+/** Milliseconds. Tolerated as null in case a window has no samples yet. */
 export interface LatencySummary {
-  p50: number;
-  p95: number;
-  p99: number;
-  max: number;
+  p50: number | null;
+  p95: number | null;
+  p99: number | null;
+  max: number | null;
 }
 
 export interface Stats {

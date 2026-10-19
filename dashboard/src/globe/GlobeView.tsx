@@ -13,6 +13,7 @@ export interface GlobeHandle {
 export interface GlobeViewProps {
   config: AppConfig;
   coverage: Coverage | null;
+  coverageHeightM: number;
   layers: LayerVisibility;
   frustumRangeKm: number;
   selection: Selection | null;
@@ -38,6 +39,7 @@ export default function GlobeView({ ref, ...props }: GlobeViewProps) {
     controller.current?.update({
       state: store.getState(),
       coverage: p.coverage,
+      coverageHeightM: p.coverageHeightM,
       layers: p.layers,
       frustumRangeKm: p.frustumRangeKm,
       selection: p.selection,
@@ -67,7 +69,7 @@ export default function GlobeView({ ref, ...props }: GlobeViewProps) {
     // `push` only reads refs; the viewer is recreated only for a new config or store.
   }, [props.config, store]);
 
-  useEffect(push, [props.coverage, props.layers, props.frustumRangeKm, props.selection]);
+  useEffect(push, [props.coverage, props.coverageHeightM, props.layers, props.frustumRangeKm, props.selection]);
 
   useImperativeHandle(ref, () => ({ flyTo: (target) => controller.current?.flyTo(target) }), []);
 

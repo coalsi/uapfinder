@@ -3,6 +3,7 @@ import {
   Cartesian3,
   Color,
   DistanceDisplayCondition,
+  HorizontalOrigin,
   type Label,
   LabelCollection,
   LabelStyle,
@@ -22,6 +23,16 @@ import { CLASS_COLORS, CLASS_LABELS } from "../../theme";
 import { formatSpeed } from "../../format";
 import type { RenderScheduler } from "../renderScheduler";
 import { LABEL_BACKGROUND, LABEL_FONT, LABEL_TEXT, MARKER_DEPTH_TEST_DISTANCE } from "./NodeLayer";
+
+const SMALL_LABEL_FONT = '600 12px system-ui, -apple-system, "Segoe UI", sans-serif';
+/**
+ * Unselected track labels show only within this camera distance (m), so the
+ * network-wide view stays legible (colour + legend identify the class); the
+ * selected track's label always shows.
+ */
+const LABEL_RANGE_M = 6e4;
+const ALWAYS = new DistanceDisplayCondition(0, Number.MAX_VALUE);
+const NEAR = new DistanceDisplayCondition(0, LABEL_RANGE_M);
 
 interface Entry {
   points: TrackPoint[];
@@ -122,16 +133,19 @@ export class TrackLayer {
         backgroundColor: LABEL_BACKGROUND,
         backgroundPadding: new Cartesian2(6, 4),
         style: LabelStyle.FILL,
-        verticalOrigin: VerticalOrigin.BOTTOM,
-        pixelOffset: new Cartesian2(0, -14),
-        distanceDisplayCondition: new DistanceDisplayCondition(0, 2.5e6),
+        // To the right of the head, so labels collide less with node labels (above their markers).
+        horizontalOrigin: HorizontalOrigin.LEFT,
+        verticalOrigin: VerticalOrigin.CENTER,
+        pixelOffset: new Cartesian2(12, 0),
         disableDepthTestDistance: MARKER_DEPTH_TEST_DISTANCE,
       });
     label.show = head.show;
     label.position = headPosition;
+    label.font = selected ? LABEL_FONT : SMALL_LABEL_FONT;
+    label.distanceDisplayCondition = selected ? ALWAYS : NEAR;
     label.text = selected
       ? `${id} · ${CLASS_LABELS[track.classification]} · ${formatSpeed(track.speed_mps)}`
-      : `${id} · ${CLASS_LABELS[track.classification]}`;
+      : `${CLASS_LABELS[track.classification]} ${id}`;
 
     return { points, track, selected, path, drop, head, label };
   }

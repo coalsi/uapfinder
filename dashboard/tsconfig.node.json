@@ -4,12 +4,15 @@
     "lib": ["es2023"],
     "module": "esnext",
     "moduleResolution": "bundler",
-    "types": [],
+    "types": ["node"],
+    "allowImportingTsExtensions": true,
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts", "src/basePath.ts"]
 }

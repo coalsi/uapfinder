@@ -109,17 +109,20 @@ export function TrackDetails({ backend, trackId, onClose }: TrackDetailsProps) {
         <p className="muted small">No clips requested yet.</p>
       ) : (
         <ul className="clips">
-          {clips.map((c) => (
-            <li key={c.request_id}>
-              <span className="mono">{c.node_id}</span>
-              <span className={`badge clip-${c.status}`}>{c.status}</span>
-              {c.status === "uploaded" && c.download_url && (
-                <a href={c.download_url} download target="_blank" rel="noopener">
-                  Download
-                </a>
-              )}
-            </li>
-          ))}
+          {clips.map((c) => {
+            const href = c.status === "uploaded" ? backend.link(c.download_url) : null;
+            return (
+              <li key={c.request_id}>
+                <span className="mono">{c.node_id}</span>
+                <span className={`badge clip-${c.status}`}>{c.status}</span>
+                {href && (
+                  <a href={href} download target="_blank" rel="noopener noreferrer">
+                    Download<span className="visually-hidden"> clip from {c.node_id}</span>
+                  </a>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </article>

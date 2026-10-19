@@ -25,8 +25,12 @@ export function formatRate(perSecond: number): string {
   return perSecond >= 1000 ? `${num(perSecond / 1000, 1)}k` : num(perSecond, perSecond < 10 ? 1 : 0);
 }
 
-export function formatLatencyMs(ms: number): string {
-  return ms < 10 ? `${num(ms, 2)} ms` : `${num(ms, 0)} ms`;
+const latencyNumber = (ms: number) => (ms < 10 ? num(ms, 2) : num(ms, 0));
+
+/** "0.28 / 1.10 ms"; a missing value (no samples yet) shows as a dash. */
+export function formatLatencyPair(p50: number | null | undefined, p99: number | null | undefined): string {
+  const part = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? latencyNumber(v) : "–");
+  return `${part(p50)} / ${part(p99)} ms`;
 }
 
 /** "12 s ago" style age of a nanosecond timestamp. */

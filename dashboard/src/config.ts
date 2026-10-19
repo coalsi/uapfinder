@@ -6,20 +6,41 @@ export type Imagery =
   /** Natural Earth II, bundled with CesiumJS: works with no network access at all. */
   | { kind: "offline" };
 
+export type PanelTab = "coverage" | "tracks" | "nodes";
+const PANEL_TABS: readonly PanelTab[] = ["coverage", "tracks", "nodes"];
+
 export interface AppConfig {
   apiBase: string;
   demo: boolean;
   ionToken: string | null;
   imagery: Imagery;
+  /** Absolute URL of the public website ("About UAP Finder"). */
+  siteUrl: string;
+  /** The website's "Host a node" page: `host/` under the site URL. */
+  hostUrl: string;
+  /** Panel to open on load (`?layer=coverage|tracks|nodes`, as the website links it); null for the default. */
+  initialPanel: PanelTab | null;
 }
 
 const OSM_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const OSM_CREDIT =
   '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
 
+/** Absolute http(s) URL for `raw` (default "/"), resolved against the page. */
+export function resolveSiteUrl(raw: string | undefined, pageHref: string): string {
+  try {
+    const url = new URL(raw && raw.trim() !== "" ? raw.trim() : "/", pageHref);
+    if (url.protocol === "http:" || url.protocol === "https:") return url.toString();
+  } catch {
+    // Fall through to the site root.
+  }
+  return new URL("/", pageHref).toString();
+}
+
 /**
  * Build-time settings come from VITE_* variables; `?demo=1|0` and
- * `?imagery=offline|osm` override them per page load.
+ * `?imagery=offline|osm` override them per page load, and `?layer=` picks
+ * the panel to open.
  */
 export function readConfig(env: ImportMetaEnv, pageHref: string): AppConfig {
   const params = new URL(pageHref).searchParams;
@@ -37,5 +58,15 @@ export function readConfig(env: ImportMetaEnv, pageHref: string): AppConfig {
   if (requested === "offline") imagery = { kind: "offline" };
   else if (requested === "osm") imagery = { kind: "tiles", url: OSM_TILES, credit: OSM_CREDIT };
 
-  return { apiBase: resolveApiBase(env.VITE_API_BASE, pageHref), demo, ionToken, imagery };
+  const siteUrl = resolveSiteUrl(env.VITE_SITE_URL, pageHref);
+  const layer = params.get("layer");
+  return {
+    apiBase: resolveApiBase(env.VITE_API_BASE, pageHref),
+    demo,
+    ionToken,
+    imagery,
+    siteUrl,
+    hostUrl: new URL("host/", siteUrl).toString(),
+    initialPanel: PANEL_TABS.find((t) => t === layer) ?? null,
+  };
 }

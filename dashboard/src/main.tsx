@@ -1,3 +1,5 @@
+// Must stay the first import: sets CESIUM_BASE_URL before any CesiumJS code runs.
+import "./cesiumBase";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";

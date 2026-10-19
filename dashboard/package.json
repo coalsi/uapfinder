@@ -2,16 +2,17 @@
   "name": "skynet-dashboard",
   "version": "0.1.0",
   "private": true,
-  "description": "SKY-NET node dashboard: live 3D tracks, viewing frustums and stereo coverage on a CesiumJS globe",
+  "description": "UAP Finder live map (SKY-NET dashboard): live 3D tracks, viewing frustums and stereo coverage on a CesiumJS globe",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "vite --port 5173",
+    "dev": "vite",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "build": "npm run typecheck && vite build",
-    "preview": "vite preview --port 5174",
+    "build:map": "npm run typecheck && vite build --base=/map/",
+    "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "fixtures": "python3 scripts/gen_camera_fixtures.py",
@@ -23,13 +24,13 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
+    "@types/node": "22.20.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
-    "playwright": "1.56.1",
+    "playwright": "1.64.1",
     "typescript": "7.0.2",
     "vite": "8.3.4",
-    "vite-plugin-static-copy": "4.1.1",
     "vitest": "5.0.5"
   }
 }

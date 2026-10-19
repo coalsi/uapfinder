@@ -23,6 +23,8 @@ import { RenderScheduler } from "./renderScheduler";
 export interface GlobeInput {
   state: State;
   coverage: Coverage | null;
+  /** Altitude slice the coverage was computed for (m above the ellipsoid). */
+  coverageHeightM: number;
   layers: LayerVisibility;
   frustumRangeKm: number;
   selection: Selection | null;
@@ -50,7 +52,11 @@ export class GlobeController {
   private state: State | null = null;
   private fitted = false;
 
-  constructor(container: HTMLElement, config: AppConfig, callbacks: GlobeCallbacks) {
+  constructor(
+    container: HTMLElement,
+    config: AppConfig,
+    private readonly callbacks: GlobeCallbacks,
+  ) {
     this.viewer = createViewer(container, config);
     const { scene } = this.viewer;
     this.scheduler = new RenderScheduler(scene);
@@ -77,12 +83,16 @@ export class GlobeController {
   update(input: GlobeInput): void {
     const { state, layers, selection } = input;
     this.state = state;
-    this.coverage.update(input.coverage, layers.coverage);
+    this.coverage.update(input.coverage, layers.coverage, input.coverageHeightM);
     this.frustums.update(state.nodes, input.frustumRangeKm * 1000, layers.frustums);
     this.tracks.update(state.tracks, selection, layers.tracks);
-    this.flashes.update(state.flashes, layers.tracks);
+    this.flashes.update(state.flashes, state.tracks, layers.tracks);
     this.nodes.update(state.nodes, selection);
-    if (!this.fitted && state.loaded && this.fitNetwork(0)) this.fitted = true;
+    if (!this.fitted && state.loaded && this.fitNetwork(0)) {
+      this.fitted = true;
+      // Coverage loads for the first view without waiting for a camera move.
+      this.callbacks.onViewChange(this.viewRect());
+    }
   }
 
   /** Visible area on the ellipsoid in degrees, or null when looking past the globe. */
@@ -100,8 +110,18 @@ export class GlobeController {
       .map((n) => Cartesian3.fromDegrees(n.lon as number, n.lat as number, n.alt_m ?? 0));
     if (positions.length === 0) return false;
     const sphere = BoundingSphere.fromPoints(positions);
-    this.flyToSphere(sphere, Math.max(sphere.radius * 5, 120_000), -50, duration);
+    this.flyToSphere(sphere, Math.max(sphere.radius * 5, 120_000) * this.portraitFactor(), -50, duration);
     return true;
+  }
+
+  /**
+   * CesiumJS applies its field of view to the larger screen dimension, so a
+   * portrait phone sees less width; back off (part of the way, so the network
+   * still fills the screen) to keep more of the same area in view.
+   */
+  private portraitFactor(): number {
+    const { clientWidth: w, clientHeight: h } = this.viewer.scene.canvas;
+    return w > 0 && h > w ? Math.min(1.5, Math.sqrt(h / w)) : 1;
   }
 
   flyTo(target: Selection): void {
@@ -121,7 +141,7 @@ export class GlobeController {
     const points = track.points.length > 0 ? track.points : track.track.last_point ? [track.track.last_point] : [];
     if (points.length === 0) return;
     const sphere = BoundingSphere.fromPoints(points.map(pointPosition));
-    this.flyToSphere(sphere, Math.max(sphere.radius * 3.2, 40_000), -30);
+    this.flyToSphere(sphere, Math.max(sphere.radius * 3.5, 40_000) * this.portraitFactor(), -30);
   }
 
   private flyToSphere(sphere: BoundingSphere, range: number, pitchDeg: number, duration = 1.5): void {

@@ -1,6 +1,6 @@
 import { Backoff } from "./backoff";
 import type { ApiClient } from "./client";
-import type { EventsPage, LiveEvent } from "./types";
+import type { LiveEvent } from "./types";
 
 /**
  * `live`: WebSocket open. `polling`: WebSocket unavailable, `GET /events`
@@ -74,9 +74,17 @@ function isLiveEvent(value: unknown): value is LiveEvent {
 
 /**
  * Live event feed: WebSocket push with exponential-backoff reconnect, gap
- * backfill from `GET /events?after=<cursor>` whenever the socket (re)opens, and
- * `GET /events` polling whenever the socket is down. On Vercel the socket may
- * never open or may be closed when the function times out; polling covers it.
+ * backfill from `GET /events?after=<cursor>` whenever the socket (re)opens,
+ * and `GET /events` polling (every second) whenever the socket is down. On
+ * Vercel the socket may never open, or be closed when the function times out;
+ * polling covers it.
+ *
+ * Event ids are opaque, so the feed never compares them. Instead `cursor`
+ * always marks a point up to which every event has been delivered: it moves
+ * with HTTP pages, and with socket messages only once the backfill after an
+ * (re)open has caught up (the socket stream is contiguous from the moment it
+ * opens). A reconnect therefore never skips events; the occasional replay is
+ * dropped by id (and the store's reducer is idempotent anyway).
  */
 export class LiveFeed {
   private readonly client: LiveFeedOptions["client"];
@@ -95,12 +103,15 @@ export class LiveFeed {
   private state: ConnectionState | null = null;
   private socket: SocketLike | null = null;
   private socketOpen = false;
-  /** Incremented per WebSocket event, so a slower HTTP page cannot move the cursor backwards. */
-  private socketEpoch = 0;
+  /** Socket open, but the events between `cursor` and the socket's first message are still being fetched. */
+  private catchingUp = false;
+  /** Incremented whenever a socket opens, so a poll that straddles it cannot move the cursor. */
+  private generation = 0;
   private polling = false;
   private pollInFlight = false;
   private pollTimer: unknown = null;
   private reconnectTimer: unknown = null;
+  private backfillTimer: unknown = null;
 
   constructor(options: LiveFeedOptions) {
     this.client = options.client;
@@ -135,12 +146,18 @@ export class LiveFeed {
   stop(): void {
     this.stopped = true;
     this.stopPolling();
-    if (this.reconnectTimer !== null) this.timers.clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = null;
+    this.clearTimer("reconnectTimer");
+    this.clearTimer("backfillTimer");
     const socket = this.socket;
     this.socket = null;
     this.socketOpen = false;
+    this.catchingUp = false;
     socket?.close();
+  }
+
+  private clearTimer(name: "reconnectTimer" | "backfillTimer" | "pollTimer"): void {
+    if (this[name] !== null) this.timers.clearTimeout(this[name]);
+    this[name] = null;
   }
 
   private setState(state: ConnectionState): void {
@@ -152,6 +169,16 @@ export class LiveFeed {
   private deliver(events: LiveEvent[]): void {
     const fresh = events.filter((e) => this.seen.add(e.id));
     if (fresh.length > 0) this.onEvents(fresh);
+  }
+
+  /** One `GET /events` page after `cursor`; returns the cursor after it and whether it was full. */
+  private async fetchFrom(cursor: string | null): Promise<{ next: string | null; full: boolean }> {
+    const page = await this.client.getEvents(cursor, this.pageLimit);
+    if (!this.stopped) this.deliver(page.events);
+    return {
+      next: page.cursor ?? page.events.at(-1)?.id ?? cursor,
+      full: page.events.length >= this.pageLimit,
+    };
   }
 
   // --- WebSocket -----------------------------------------------------------
@@ -170,10 +197,12 @@ export class LiveFeed {
     socket.onopen = () => {
       if (this.socket !== socket) return;
       this.socketOpen = true;
+      this.catchingUp = true;
+      this.generation += 1;
       this.reconnectBackoff.reset();
       this.stopPolling();
       this.setState("live");
-      void this.backfill();
+      void this.backfill(socket);
     };
     socket.onmessage = (ev) => {
       if (this.socket === socket) this.handleMessage(ev.data);
@@ -183,10 +212,13 @@ export class LiveFeed {
     };
     socket.onclose = () => {
       if (this.socket !== socket) return;
+      const wasOpen = this.socketOpen;
       this.socket = null;
       this.socketOpen = false;
+      this.catchingUp = false;
+      this.clearTimer("backfillTimer");
       if (this.stopped) return;
-      if (this.state === "live") this.setState("polling");
+      if (wasOpen) this.setState("polling");
       this.startPolling(0);
       this.scheduleReconnect();
     };
@@ -205,35 +237,32 @@ export class LiveFeed {
     } catch {
       return;
     }
-    if (!isLiveEvent(parsed)) return;
-    this.socketEpoch += 1;
-    this.cursor = parsed.id;
-    this.deliver([parsed]);
+    if (!isLiveEvent(parsed) || !this.seen.add(parsed.id)) return;
+    if (!this.catchingUp) this.cursor = parsed.id;
+    this.onEvents([parsed]);
   }
 
-  /** Fetch everything after the cursor that the socket did not deliver. */
-  private async backfill(): Promise<void> {
+  /** Fetch everything after the cursor that happened before the socket opened. */
+  private async backfill(socket: SocketLike): Promise<void> {
+    this.backfillTimer = null;
+    const current = () => !this.stopped && this.socket === socket;
     try {
-      while (this.socketOpen && !this.stopped) {
-        const count = await this.fetchPage();
-        if (count < this.pageLimit) return;
+      for (;;) {
+        if (!current()) return;
+        const { next, full } = await this.fetchFrom(this.cursor);
+        // If the socket dropped meanwhile, polling has taken over the cursor.
+        if (!current()) return;
+        this.cursor = next;
+        if (!full) break;
       }
+      this.catchingUp = false;
     } catch {
-      // The socket is live; the next reconnect backfills again.
+      if (!current()) return;
+      this.backfillTimer = this.timers.setTimeout(() => void this.backfill(socket), this.pollBackoff.next());
     }
   }
 
   // --- HTTP polling --------------------------------------------------------
-
-  private async fetchPage(): Promise<number> {
-    const epoch = this.socketEpoch;
-    const page: EventsPage = await this.client.getEvents(this.cursor, this.pageLimit);
-    if (this.stopped) return 0;
-    this.deliver(page.events);
-    const next = page.cursor ?? page.events.at(-1)?.id ?? null;
-    if (next !== null && epoch === this.socketEpoch) this.cursor = next;
-    return page.events.length;
-  }
 
   private startPolling(delayMs: number): void {
     if (this.polling || this.stopped) return;
@@ -243,8 +272,7 @@ export class LiveFeed {
 
   private stopPolling(): void {
     this.polling = false;
-    if (this.pollTimer !== null) this.timers.clearTimeout(this.pollTimer);
-    this.pollTimer = null;
+    this.clearTimer("pollTimer");
   }
 
   private schedulePoll(delayMs: number): void {
@@ -258,14 +286,19 @@ export class LiveFeed {
   private async poll(): Promise<void> {
     if (!this.polling || this.stopped) return;
     this.pollInFlight = true;
+    const generation = this.generation;
     let delay = this.pollIntervalMs;
     try {
-      const count = await this.fetchPage();
+      const { next, full } = await this.fetchFrom(this.cursor);
       this.pollBackoff.reset();
-      if (!this.socketOpen) this.setState("polling");
-      if (count >= this.pageLimit) delay = 0;
+      // A socket that opened while this request was in flight owns the cursor now.
+      if (generation === this.generation && !this.socketOpen && !this.stopped) {
+        this.cursor = next;
+        this.setState("polling");
+      }
+      if (full) delay = 0;
     } catch {
-      if (!this.socketOpen) this.setState("offline");
+      if (!this.socketOpen && !this.stopped) this.setState("offline");
       delay = this.pollBackoff.next();
     } finally {
       this.pollInFlight = false;

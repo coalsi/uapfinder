@@ -16,9 +16,11 @@ interface CoveragePanelProps {
   onRefAltChange(m: number): void;
   selection: Extract<Selection, { kind: "suggestion" }> | null;
   onSelect(selection: Selection): void;
+  hostUrl: string;
 }
 
-export function CoveragePanel({ result, enabled, onEnable, refAltM, onRefAltChange, selection, onSelect }: CoveragePanelProps) {
+export function CoveragePanel(props: CoveragePanelProps) {
+  const { result, enabled, onEnable, refAltM, onRefAltChange, selection, onSelect, hostUrl } = props;
   const { coverage, query, loading, error } = result;
   const total = coverage ? coverage.summary.blind + coverage.summary.mono + coverage.summary.stereo : 0;
 
@@ -68,6 +70,16 @@ export function CoveragePanel({ result, enabled, onEnable, refAltM, onRefAltChan
           ? `Visible area, ${query.cell_km} km cells at ${formatAltitude(query.ref_alt_m)} above the ellipsoid.`
           : enabled && "Coverage loads for the area in view."}
       </p>
+
+      <aside className="cta" aria-label="Host a node">
+        <p>
+          <strong>Live under a red or amber patch?</strong> One rooftop or backyard camera there turns the cells it
+          shares with a neighbour green. Rural sites far from existing nodes help most.
+        </p>
+        <a className="button primary" href={hostUrl}>
+          Host a node
+        </a>
+      </aside>
 
       <h3>
         <Swatch color={SUGGESTION_COLOR} shape="dot" /> Deploy a node here

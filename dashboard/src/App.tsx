@@ -1,9 +1,9 @@
 import { Suspense, lazy, useCallback, useRef, useState } from "react";
-import type { AppConfig } from "./config";
+import type { AppConfig, PanelTab } from "./config";
 import { Header } from "./components/Header";
 import { LayerBar } from "./components/LayerBar";
 import { Legend } from "./components/Legend";
-import { Panel, type PanelTab } from "./components/Panel";
+import { Panel } from "./components/Panel";
 import type { Backend } from "./data/backend";
 import { useCoverage, useLiveFeed, useStats } from "./data/hooks";
 import type { GeoRect } from "./geo/coverageQuery";
@@ -32,8 +32,9 @@ export default function App({ config, backend, store }: AppProps) {
   const [refAltM, setRefAltM] = useState(DEFAULT_REF_ALT_M);
   const [view, setView] = useState<GeoRect | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [tab, setTab] = useState<PanelTab>("coverage");
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  // `?layer=` (the website's "where nodes are needed" link) opens that panel, also on phones.
+  const [tab, setTab] = useState<PanelTab>(config.initialPanel ?? "coverage");
+  const [drawerOpen, setDrawerOpen] = useState(config.initialPanel !== null);
   const coverage = useCoverage(backend, view, refAltM, layers.coverage);
   const globe = useRef<GlobeHandle>(null);
 
@@ -50,13 +51,14 @@ export default function App({ config, backend, store }: AppProps) {
   return (
     <StoreContext.Provider value={store}>
       <div className="app">
-        <Header demo={backend.kind === "demo"} connection={connection} stats={stats} />
+        <Header demo={backend.kind === "demo"} connection={connection} stats={stats} siteUrl={config.siteUrl} />
         <main className="stage">
           <Suspense fallback={<div className="globe globe-loading">Loading 3D globe…</div>}>
             <GlobeView
               ref={globe}
               config={config}
               coverage={coverage.coverage}
+              coverageHeightM={coverage.query?.ref_alt_m ?? refAltM}
               layers={layers}
               frustumRangeKm={frustumRangeKm}
               selection={selection}
@@ -71,6 +73,11 @@ export default function App({ config, backend, store }: AppProps) {
             onFrustumRangeChange={setFrustumRangeKm}
           />
           <Legend layers={layers} />
+          {backend.kind === "demo" && (
+            <p className="demo-watermark" aria-hidden="true">
+              DEMO DATA · simulated network near Phoenix, AZ
+            </p>
+          )}
         </main>
         <Panel
           backend={backend}
@@ -86,6 +93,7 @@ export default function App({ config, backend, store }: AppProps) {
           onEnableCoverage={() => setLayers((l) => ({ ...l, coverage: true }))}
           refAltM={refAltM}
           onRefAltChange={setRefAltM}
+          hostUrl={config.hostUrl}
         />
       </div>
     </StoreContext.Provider>

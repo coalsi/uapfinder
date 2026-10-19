@@ -39,9 +39,6 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** Area the demo cameras watch: the West Valley near Phoenix, AZ. */
-export const DEMO_CENTER = { lat: 33.6, lon: -112.45 };
-
 function demoNode(
   node_id: string,
   label: string,
@@ -219,8 +216,9 @@ export class Simulator {
     return { id: `${Math.round(this.epochMs + simS * 1000)}-${this.seq}`, type, t_ns: this.ns(simS), data } as LiveEvent;
   }
 
+  /** Copies, so the store never holds objects the simulator later mutates. */
   nodeList(): Node[] {
-    return [...this.nodes.values()];
+    return [...this.nodes.values()].map((n) => ({ ...n, status: n.status ? { ...n.status } : null }));
   }
 
   /** Advance to simulation time `t` (seconds) and return the events produced. */
@@ -454,6 +452,8 @@ export function createDemoBackend(now: () => number = Date.now): Backend {
     async getCoverage(query: CoverageQuery): Promise<Coverage> {
       return computeCoverage(sim.nodeList(), query);
     },
+    // Demo links are generated locally (data: URLs), so they pass through.
+    link: (url) => url,
     connect(handlers: FeedHandlers) {
       handlers.onState("demo");
       const history = advanceTo(clock(now()) - TICK_S);

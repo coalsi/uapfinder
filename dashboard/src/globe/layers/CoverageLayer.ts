@@ -22,7 +22,7 @@ import { COVERAGE_COLORS, SUGGESTION_COLOR } from "../../theme";
 import type { RenderScheduler } from "../renderScheduler";
 import { LABEL_BACKGROUND, LABEL_FONT, LABEL_TEXT, MARKER_DEPTH_TEST_DISTANCE } from "./NodeLayer";
 
-const ALPHA: Record<CoverageStatus, number> = { blind: 0.26, mono: 0.34, stereo: 0.4 };
+const ALPHA: Record<CoverageStatus, number> = { blind: 0.38, mono: 0.42, stereo: 0.46 };
 const CELL_COLORS = Object.fromEntries(
   Object.entries(COVERAGE_COLORS).map(([status, hex]) => [
     status,
@@ -56,7 +56,8 @@ export class CoverageLayer {
     scene.primitives.add(this.root);
   }
 
-  update(coverage: Coverage | null, visible: boolean): void {
+  /** `fallbackHeightM` is used when the response does not echo `params.ref_alt_m`. */
+  update(coverage: Coverage | null, visible: boolean, fallbackHeightM: number): void {
     if (this.root.show !== visible) {
       this.root.show = visible;
       this.scheduler.request();
@@ -71,7 +72,7 @@ export class CoverageLayer {
       return;
     }
 
-    const height = typeof coverage.params.ref_alt_m === "number" ? coverage.params.ref_alt_m : 0;
+    const height = typeof coverage.params?.ref_alt_m === "number" ? coverage.params.ref_alt_m : fallbackHeightM;
     const instances: GeometryInstance[] = [];
     for (const feature of coverage.features) {
       const ring = feature.geometry.coordinates[0];
@@ -129,7 +130,7 @@ export class CoverageLayer {
       this.labels.add({
         id,
         position,
-        text: `Deploy a node here · +${s.gain_cells} stereo cells`,
+        text: `Deploy here · +${s.gain_cells}`,
         font: LABEL_FONT,
         fillColor: LABEL_TEXT,
         showBackground: true,

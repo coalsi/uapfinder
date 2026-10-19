@@ -22,11 +22,42 @@ type Query = Record<string, string | number | boolean | null | undefined>;
 
 /**
  * Absolute http(s) root of the API server without a trailing slash. An empty
- * `raw` value means same origin (the Vercel deployment routes /api/* there).
+ * `raw` value means same origin (the combined Vercel deploy routes /api/*
+ * there). A trailing `/api/v1` is tolerated and removed, since the client adds
+ * it to every path.
  */
 export function resolveApiBase(raw: string | undefined, pageHref: string): string {
   const url = new URL(raw && raw.trim() !== "" ? raw.trim() : "/", pageHref);
-  return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`VITE_API_BASE must be an http(s) URL, got ${url.protocol}`);
+  }
+  const path = url.pathname.replace(/\/+$/, "").replace(/\/api\/v1$/, "");
+  return `${url.origin}${path}`;
+}
+
+/** WebSocket URL for an http(s) URL: https -> wss, http -> ws. */
+export function toWebSocketUrl(httpUrl: string): string {
+  const url = new URL(httpUrl);
+  if (url.protocol === "https:") url.protocol = "wss:";
+  else if (url.protocol === "http:") url.protocol = "ws:";
+  else throw new Error(`not an http(s) URL: ${httpUrl}`);
+  return url.toString();
+}
+
+/**
+ * A link the server handed out (e.g. a clip's `download_url`), made absolute
+ * against `base` so relative paths point at the API server rather than at the
+ * dashboard's origin. Anything but http(s) is refused (null), so a bad value
+ * can never become a `javascript:` link.
+ */
+export function resolveServerLink(link: string | null | undefined, base: string): string | null {
+  if (!link) return null;
+  try {
+    const url = new URL(link, `${base}/`);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 export class ApiClient {
@@ -47,12 +78,18 @@ export class ApiClient {
     return url.toString();
   }
 
-  /** WebSocket URL of the live event feed. */
+  /** WebSocket URL of the live event feed (wss:// for an https:// API). */
   liveUrl(): string {
-    return this.url("/live").replace(/^http/, "ws");
+    return toWebSocketUrl(this.url("/live"));
+  }
+
+  /** Absolute, http(s)-only form of a link from an API response. */
+  link(link: string | null | undefined): string | null {
+    return resolveServerLink(link, this.base);
   }
 
   private async get<T>(path: string, query?: Query, signal?: AbortSignal): Promise<T> {
+    // Only CORS-safelisted headers, so cross-origin GETs need no preflight.
     const init: RequestInit = { headers: { Accept: "application/json" } };
     if (signal) init.signal = signal;
     const res = await this.fetchImpl(this.url(path, query), init);

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type { PanelTab } from "../config";
 import type { Backend } from "../data/backend";
 import type { CoverageResult } from "../data/hooks";
 import type { Selection } from "../selection";
@@ -9,7 +10,6 @@ import { NodeList } from "./NodeList";
 import { TrackDetails } from "./TrackDetails";
 import { TrackList } from "./TrackList";
 
-export type PanelTab = "coverage" | "tracks" | "nodes";
 
 interface PanelProps {
   backend: Backend;
@@ -26,6 +26,7 @@ interface PanelProps {
   onEnableCoverage(): void;
   refAltM: number;
   onRefAltChange(m: number): void;
+  hostUrl: string;
 }
 
 export function Panel(props: PanelProps) {
@@ -89,6 +90,7 @@ export function Panel(props: PanelProps) {
             onRefAltChange={props.onRefAltChange}
             selection={selection?.kind === "suggestion" ? selection : null}
             onSelect={props.onSelect}
+            hostUrl={props.hostUrl}
           />
         )}
         {tab === "tracks" && (

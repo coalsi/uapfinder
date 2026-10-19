@@ -1,5 +1,6 @@
-/* SKY-NET dashboard: dark, night-sky theme (dark only by design: the app is
-   used outdoors at night, and the globe imagery is dimmed to match). */
+/* UAP Finder live map (SKY-NET dashboard): dark, night-sky theme (dark only
+   by design: the app is used outdoors at night, and the globe imagery is
+   dimmed to match). */
 :root {
   color-scheme: dark;
   --bg: #03050a;
@@ -89,6 +90,17 @@ input {
 }
 .error {
   color: var(--bad);
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.narrow-only {
+  display: none;
 }
 
 /* --- layout -------------------------------------------------------------- */
@@ -216,6 +228,18 @@ input {
 .stale {
   color: var(--warn);
 }
+.about-link {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+.about-link:hover {
+  background: var(--surface-2);
+}
 
 /* --- globe --------------------------------------------------------------- */
 
@@ -241,6 +265,27 @@ input {
 .cesium-viewer-bottom {
   /* Attribution must stay readable over the dark globe. */
   color: var(--text-2);
+}
+.cesium-widget-credits a,
+.cesium-credit-expand-link {
+  color: var(--text-2);
+}
+.demo-watermark {
+  position: absolute;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: rgba(232, 123, 164, 0.16);
+  border: 1px solid rgba(232, 123, 164, 0.55);
+  color: #f5c2d5;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .layer-bar {
@@ -456,6 +501,29 @@ input {
   border-color: var(--accent);
   font-weight: 700;
 }
+a.button {
+  display: inline-block;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.cta {
+  margin: 14px 0 4px;
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(144, 133, 233, 0.6);
+  background: rgba(144, 133, 233, 0.12);
+}
+.cta p {
+  margin: 0 0 10px;
+  color: var(--text-2);
+}
+.cta strong {
+  color: var(--text);
+}
+.cta .button {
+  margin-bottom: 0;
+}
 
 .list {
   list-style: none;
@@ -615,6 +683,12 @@ input {
 /* --- narrow screens: the panel becomes a bottom drawer ------------------- */
 
 @media (max-width: 900px) {
+  .wide-only {
+    display: none;
+  }
+  .narrow-only {
+    display: inline;
+  }
   .app {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto;
@@ -630,15 +704,38 @@ input {
   .connection {
     margin-left: auto;
   }
+  .connection {
+    font-size: 11px;
+  }
+  .about-link {
+    padding: 4px 8px;
+    font-size: 12px;
+  }
   .tiles {
     order: 3;
     flex-basis: 100%;
+    gap: 4px;
   }
   .tile {
-    padding: 3px 8px;
+    flex: 1 1 auto;
+    padding: 3px 6px;
   }
   .tile-value {
     font-size: 13px;
+    white-space: nowrap;
+  }
+  .tile-label {
+    font-size: 10px;
+  }
+  .demo-watermark {
+    /* Left-aligned so it clears the Legend button at the bottom right. */
+    left: 8px;
+    transform: none;
+    bottom: 36px;
+    max-width: calc(100% - 112px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 10px;
   }
   .panel {
     grid-column: 1;
