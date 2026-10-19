@@ -1,16 +1,19 @@
 """Optical flow where it earns its place.
 
-* Sparse pyramidal Lucas-Kanade on small crops, used by the tracker to
-  (a) give a brand-new track an initial velocity by flowing its first
-  detection back into the previous frame, so a fast target's second
-  detection falls inside the gate, and (b) bridge frames where a confirmed
-  target dips below the detection threshold. Every LK result must pass a
-  forward-backward consistency check. Crops keep the cost independent of
-  the 1080p frame size (no full-frame pyramids).
-* Coarse dense Farneback flow on a heavily downscaled frame every few
-  frames: the cloud motion field. Clouds move coherently with the wind;
-  a large diffuse blob whose image velocity matches the local field is
-  almost certainly cloud structure, not an object.
+* Sparse pyramidal Lucas-Kanade on small crops bridges frames where a
+  confirmed target dips below the detection threshold (glint, haze,
+  scintillation). LK is seeded with the Kalman prediction
+  (``OPTFLOW_USE_INITIAL_FLOW``), so it only refines a small residual and
+  works for fast targets too; started from scratch, LK cannot follow a
+  2-3 px point target that moves several pixels per frame (there is no
+  texture at coarse pyramid levels), so it is not used to initialise new
+  tracks: the tracker's wide initial-velocity gate does that. Every result
+  must pass a forward-backward consistency check. Crops keep the cost
+  independent of the 1080p frame size (no full-frame pyramids).
+* Coarse dense Farneback flow on a heavily downscaled frame: the cloud
+  motion field. Clouds move coherently with the wind; a large diffuse blob
+  whose image velocity matches the local field is cloud structure, not an
+  object.
 """
 
 from __future__ import annotations
@@ -20,25 +23,28 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 
+_LK_CRITERIA = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
+
 
 def lk_flow(prev: np.ndarray, cur: np.ndarray, u: float, v: float, win: int, levels: int,
-            fb_tol_px: float = 0.5) -> Optional[Tuple[float, float]]:
-    """Follow point (u, v) of ``prev`` into ``cur``; None if unreliable."""
+            guess: Optional[Tuple[float, float]] = None, fb_tol_px: float = 0.5) -> Optional[Tuple[float, float]]:
+    """Follow point (u, v) of ``prev`` into ``cur``, starting from ``guess``; None if unreliable."""
     h, w = prev.shape
-    reach = (win // 2 + 2) * (2 ** levels) + win
-    x0, y0 = max(0, int(u) - reach), max(0, int(v) - reach)
-    x1, y1 = min(w, int(u) + reach + 1), min(h, int(v) + reach + 1)
+    gu, gv = guess if guess is not None else (u, v)
+    margin = (win // 2 + 2) * (2 ** levels)
+    x0, y0 = max(0, int(min(u, gu)) - margin), max(0, int(min(v, gv)) - margin)
+    x1, y1 = min(w, int(max(u, gu)) + margin + 1), min(h, int(max(v, gv)) + margin + 1)
     if x1 - x0 < win or y1 - y0 < win:
         return None
     a = np.ascontiguousarray(prev[y0:y1, x0:x1])
     b = np.ascontiguousarray(cur[y0:y1, x0:x1])
     p0 = np.array([[[u - x0, v - y0]]], dtype=np.float32)
-    params = dict(winSize=(win, win), maxLevel=levels,
-                  criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
-    p1, st, _ = cv2.calcOpticalFlowPyrLK(a, b, p0, None, **params)
+    p1 = np.array([[[gu - x0, gv - y0]]], dtype=np.float32)
+    params = dict(winSize=(win, win), maxLevel=levels, criteria=_LK_CRITERIA, flags=cv2.OPTFLOW_USE_INITIAL_FLOW)
+    p1, st, _ = cv2.calcOpticalFlowPyrLK(a, b, p0, p1, **params)
     if p1 is None or not st[0, 0]:
         return None
-    back, st2, _ = cv2.calcOpticalFlowPyrLK(b, a, p1, None, **params)
+    back, st2, _ = cv2.calcOpticalFlowPyrLK(b, a, p1, p0.copy(), **params)
     if back is None or not st2[0, 0] or float(np.hypot(*(back[0, 0] - p0[0, 0]))) > fb_tol_px:
         return None
     nu, nv = float(p1[0, 0, 0]) + x0, float(p1[0, 0, 1]) + y0
@@ -67,7 +73,6 @@ class CloudFlow:
         self._count = 0
         self._field: Optional[np.ndarray] = None  # (sh, sw, 2) px/s at full resolution
         self._field_t_ns = 0
-        self.computed = 0
 
     def update(self, y: np.ndarray, t_ns: int) -> None:
         """Feed a frame; keeps a small copy every ``every`` frames."""
@@ -87,7 +92,6 @@ class CloudFlow:
             flow = cv2.calcOpticalFlowFarneback(a, b, None, 0.5, 2, 9, 3, 5, 1.1, 0)
             self._field = flow * (self.scale / ((tb - ta) / 1e9))
             self._field_t_ns = tb
-            self.computed += 1
         return self._field
 
     def velocity_at(self, u: float, v: float, radius_px: float) -> Optional[Tuple[float, float]]:

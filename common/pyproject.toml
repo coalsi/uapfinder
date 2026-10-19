@@ -7,7 +7,8 @@ name = "skynet-common"
 version = "0.1.0"
 description = "SKY-NET shared geodesy, stereo triangulation and wire protocol"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24"]
+# JetPack 6's OpenCV is built against numpy 1.x, so edge nodes stay on 1.2x.
+dependencies = ["numpy>=1.21"]
 
 [project.optional-dependencies]
 test = ["pytest>=8", "pyproj>=3.6"]

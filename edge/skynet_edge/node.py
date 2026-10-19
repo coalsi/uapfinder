@@ -125,7 +125,9 @@ class EdgeNode:
         while True:
             ref = self.queue.get(timeout=0.5)
             if ref is None:
-                if self.queue.finished():
+                # End of stream, or a stop request once queued frames are done
+                # (a hung camera driver may never return from read()).
+                if self.queue.finished() or self.stop_event.is_set():
                     return
                 continue
             self._process(ref)
@@ -136,7 +138,7 @@ class EdgeNode:
     def _shutdown(self, drain_timeout_s: float) -> None:
         self.notifier.stopping()
         self.stop_event.set()
-        self.capture.join(10.0)
+        self.capture.join(3.0)  # a hung camera driver may never return; the thread is a daemon
         self.clips.stop(timeout=max(10.0, drain_timeout_s))
         if not self.uploader.drain(drain_timeout_s):
             log.warning("shutting down with clip uploads still pending")
@@ -217,8 +219,10 @@ class EdgeNode:
             "uplink": {k: v for k, v in self.uplink.stats.items() if v},
         }
         st.update(headline_temperatures(thermal_zones_c()))
+        st["sky_frac"] = round(self.pipeline.sky.sky_fraction, 3)
         st.update(self.gps.status())
         st.update(self.attitude.status())
+        st.update(self.adsb.status())
         if self._chrony:
             st.update(self._chrony)
         return st

@@ -16,6 +16,9 @@ measurement for ``max_coast_s`` is *lost* and removed.
 Every measurement is stored with its az/el (computed by the caller from the
 undistorted centroid and the current attitude), area and intensity, which
 is what the kinematics, the false-positive filters and the telemetry use.
+When a confirmed track misses a detection, pyramidal Lucas-Kanade seeded
+with the Kalman prediction (``flow.lk_flow``) supplies the measurement, so
+a target that fades for a frame or two is not lost.
 """
 
 from __future__ import annotations
@@ -114,7 +117,6 @@ class Track:
         self.last_det_ns = t_ns  # latest detector (not optical-flow) sample
         self.samples: Deque[TrackSample] = deque()
         self.hit_history: List[bool] = []
-        self.hits = 0
         self.history_ns = int(history_s * 1e9)
         self.verdicts: Dict[str, Verdict] = {}
         self.flags: Set[str] = set()
@@ -300,11 +302,11 @@ class Tracker:
             if len(tr.hit_history) < cfg.confirm_window:
                 tr.hit_history.append(hit)
             if hit:
-                tr.hits += 1
                 continue
             if use_lk and tr.state == CONFIRMED and tr.samples and tr.last.t_ns == prev_t \
                     and t_ns - tr.last_det_ns <= int(cfg.max_coast_s * 1e9):
-                got = lk_flow(prev_y, cur_y, tr.last.u, tr.last.v, cfg.lk_window_px, cfg.lk_levels)
+                got = lk_flow(prev_y, cur_y, tr.last.u, tr.last.v, cfg.lk_window_px, cfg.lk_levels,
+                              guess=(float(tr.kf.x[0]), float(tr.kf.x[1])))
                 if got is not None and tr.kf.mahalanobis2(got) <= cfg.gate_sigma ** 2:
                     tr.kf.update(got)
                     tr.add_sample(_bridge_sample(t_ns, tr.last, got, to_azel(np.array([got]))[0]))
@@ -313,9 +315,8 @@ class Tracker:
         for j, b in enumerate(blobs):
             if j in matched_blobs:
                 continue
-            tr = self._spawn(t_ns, b, dt, prev_y if use_lk else None, cur_y)
+            tr = self._spawn(t_ns, b)
             tr.add_sample(_sample(t_ns, b, azel[j]))
-            tr.hits = 1
             tr.hit_history.append(True)
             self.tracks.append(tr)
 
@@ -337,18 +338,11 @@ class Tracker:
         out.active = [t for t in survivors if t.state == CONFIRMED]
         return out
 
-    def _spawn(self, t_ns: int, b: Blob, dt: float, prev_y: Optional[np.ndarray],
-               cur_y: Optional[np.ndarray]) -> Track:
+    def _spawn(self, t_ns: int, b: Blob) -> Track:
+        """A tentative track at an unassigned blob; its velocity is unknown (wide prior)."""
         cfg = self.cfg
         r2 = cfg.measurement_noise_px ** 2
-        vu = vv = 0.0
-        vel_var = cfg.initial_velocity_px_s ** 2
-        if prev_y is not None and cur_y is not None and dt > 0:
-            back = lk_flow(cur_y, prev_y, b.u, b.v, cfg.lk_window_px, cfg.lk_levels)
-            if back is not None:
-                vu, vv = (b.u - back[0]) / dt, (b.v - back[1]) / dt
-                vel_var = (4.0 * cfg.measurement_noise_px / dt) ** 2
-        kf = KalmanCV(b.u, b.v, vu, vv, r2, vel_var, cfg.process_accel_px_s2 ** 2, r2)
+        kf = KalmanCV(b.u, b.v, 0.0, 0.0, r2, cfg.initial_velocity_px_s ** 2, cfg.process_accel_px_s2 ** 2, r2)
         return Track(self._new_id(), kf, t_ns, cfg.history_s)
 
 

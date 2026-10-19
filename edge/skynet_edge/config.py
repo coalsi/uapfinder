@@ -291,7 +291,7 @@ class TrackingConfig:
     history_s: float = 20.0
     lk_enabled: bool = True
     lk_window_px: int = 15
-    lk_levels: int = 3
+    lk_levels: int = 2
     dense_flow_every: int = 6
     dense_flow_width: int = 160
     analysis_hz: float = 20.0

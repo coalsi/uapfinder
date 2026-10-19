@@ -250,7 +250,12 @@ class ClipManager:
 
     def _pump(self, job: _Job) -> bool:
         p = job.protection
-        frames = self.ring.frames_between(p.cursor_ns + 1, p.t1_ns)
+        # Sample the newest frame *before* listing: if it is already past the
+        # window end, the listing below is guaranteed to contain every frame
+        # of the window, so the job may finish after copying them.
+        latest = self.ring.latest()
+        t1 = p.t1_ns
+        frames = self.ring.frames_between(p.cursor_ns + 1, t1)
         for seq, t in frames:
             if job.writer is None:
                 job.writer = Y4MWriter(job.directory / "clip.y4m", self.ring.width, self.ring.height, self.fps)
@@ -261,8 +266,8 @@ class ClipManager:
                 job.timestamps.append(t)
             self.ring.advance(p, t)
             job.last_progress = time.monotonic()
-        latest = self.ring.latest()
-        done = latest is not None and latest[1] >= p.t1_ns
+        # Done only if the window was not extended while we were copying.
+        done = latest is not None and latest[1] >= t1 and p.t1_ns == t1
         stalled = time.monotonic() - job.last_progress > self.cfg.frame_wait_timeout_s
         if done or stalled or self._stop.is_set():
             if stalled and not done:

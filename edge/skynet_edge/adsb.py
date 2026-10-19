@@ -198,7 +198,11 @@ class AdsbFeed:
         with self._lock:
             return [a for a in self._aircraft if abs(t_ns - a.t_pos_ns) <= max_age]
 
-    def set_aircraft(self, aircraft: List[Aircraft]) -> None:
-        """Inject a list directly (replay and tests)."""
+    def status(self) -> Dict[str, Any]:
+        if not self.enabled:
+            return {}
         with self._lock:
-            self._aircraft = list(aircraft)
+            n = len(self._aircraft)
+        age = (self._clock() - self.last_ok_ns) / 1e9 if self.last_ok_ns else None
+        return {"adsb_aircraft": n, "adsb_age_s": None if age is None else round(age, 1),
+                "adsb_errors": self.errors}

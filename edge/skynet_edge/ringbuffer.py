@@ -144,12 +144,6 @@ class FrameRing:
             found = self._lookup(seq)
         return None if found is None else self._buf[found[1], : self.height]
 
-    def frame_view(self, seq: int) -> Optional[Tuple[int, np.ndarray]]:
-        """Zero-copy ``(t_ns, i420)`` view of a frame."""
-        with self._lock:
-            found = self._lookup(seq)
-        return None if found is None else (found[0], self._buf[found[1]])
-
     def copy_frame(self, seq: int, out: np.ndarray) -> Optional[int]:
         """Copy a frame into ``out``; returns its timestamp, or None if gone or overwritten mid-copy."""
         with self._lock:

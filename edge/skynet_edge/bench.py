@@ -48,8 +48,9 @@ def bench_config(base: Optional[EdgeConfig], width: int, height: int, fps: float
         cfg.gps, source="static", static=PositionConfig(33.6292, -112.3679, 357.2))
     clips = dataclasses.replace(cfg.clips, record_events=clips_dir is not None,
                                 storage_dir=clips_dir or tempfile.mkdtemp(prefix="skynet-bench-"))
+    node = dataclasses.replace(cfg.node, key_hex=os.urandom(32).hex(), key_file=None)  # signing cost included
     return dataclasses.replace(
-        cfg, camera=cam, detection=det, gps=gps, clips=clips,
+        cfg, node=node, camera=cam, detection=det, gps=gps, clips=clips,
         server=dataclasses.replace(cfg.server, transport="none"),
         attitude=dataclasses.replace(cfg.attitude, source="static"),
         adsb=dataclasses.replace(cfg.adsb, source="none"),
@@ -65,7 +66,7 @@ def _percentiles(values: List[float]) -> Dict[str, float]:
 
 
 def run_bench(cfg: EdgeConfig, seconds: float, warmup_s: float = 2.0) -> Dict[str, Any]:
-    node = EdgeNode(cfg, uplink=NullUplink(cfg.node.node_id, os.urandom(32)))
+    node = EdgeNode(cfg, uplink=NullUplink(cfg.node.node_id, cfg.node.load_key()))
     timer = node.pipeline.timer
     marks: Dict[str, Any] = {}
 

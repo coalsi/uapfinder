@@ -1,0 +1,9 @@
+# /etc/default/gpsd, written by SKY-NET deploy/jetson/setup.sh.
+START_DAEMON="true"
+# The receiver is a fixed serial device (udev symlink /dev/gps0), not hot-plugged.
+USBAUTO="false"
+DEVICES="/dev/gps0"
+# -n: read the receiver even when no client is connected, so chrony always
+#     gets GPS time through shared memory segment 0.
+# -s: fixed serial speed instead of autobauding.
+GPSD_OPTIONS="-n -s @GPS_BAUD@"

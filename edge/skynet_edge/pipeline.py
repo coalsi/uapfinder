@@ -6,6 +6,12 @@ list, and returns which telemetry samples to send. Keeping it free of threads,
 sockets and clocks makes it deterministic, so the same object runs the live
 node, ``replay``, the bench and the integration test.
 
+Detection, tracking and the background update run on every frame. The
+per-track analysis (kinematic fit, anomaly score, false-positive filters) is
+the expensive part in Python, and its inputs change slowly, so each
+confirmed track is re-analysed at ``tracking.analysis_hz`` (default 20 Hz,
+i.e. every third frame at 60 fps; new tracks immediately).
+
 Report policy (see ``AnomalyConfig``): a confirmed track that no
 false-positive filter explains is reported once it is ``report_min_age_s``
 old. From then on one sample per ``1/report_hz`` is emitted, starting up to

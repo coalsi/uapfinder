@@ -227,10 +227,6 @@ class UdpUplink(Uplink):
         return sock, dual
 
     @property
-    def local_port(self) -> int:
-        return int(self._sock.getsockname()[1])
-
-    @property
     def server_addr(self) -> Optional[Tuple[Any, ...]]:
         with self._addr_lock:
             return self._addr

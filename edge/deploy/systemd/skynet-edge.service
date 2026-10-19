@@ -1,0 +1,62 @@
+# SKY-NET edge node. Installed by deploy/jetson/setup.sh to
+# /etc/systemd/system/skynet-edge.service. NOT tested on Jetson hardware.
+[Unit]
+Description=SKY-NET edge node (sky camera detection, tracking and uplink)
+Documentation=file:///opt/skynet/src/edge/README.md
+# Frame timestamps need the GPS/PPS-disciplined clock, and the CSI camera
+# needs nvargus-daemon. tailscaled is ordered first when present so the
+# server's MagicDNS name resolves at start-up (the node re-resolves anyway).
+After=network-online.target time-sync.target chrony.service gpsd.service nvargus-daemon.service tailscaled.service
+Wants=network-online.target time-sync.target gpsd.service
+StartLimitIntervalSec=600
+StartLimitBurst=20
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=skynet
+Group=skynet
+WorkingDirectory=/var/lib/skynet
+ExecStart=/opt/skynet/venv/bin/skynet-edge run --config /etc/skynet/edge.yaml
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=5
+# Ring-buffer allocation and camera start-up take a few seconds; the node
+# sends READY=1 after the first processed frame.
+TimeoutStartSec=180
+# On stop the node finishes exporting/encoding buffered clips (CPU-only x264
+# on Orin Nano) and pending uploads before exiting.
+TimeoutStopSec=120
+# WATCHDOG=1 is sent only while frames are being processed: a camera that
+# stops delivering gets the service restarted.
+WatchdogSec=30
+
+# Memory: the Orin Nano's 8 GB is shared by CPU and GPU. The default ring
+# buffer (14 s of 1080p60 I420) is ~2.6 GB; stay well clear of the OS.
+MemoryHigh=6500M
+MemoryMax=6900M
+
+# Hardening that keeps camera, I2C, serial and GPU device access working.
+# Deliberately NOT used:
+#   PrivateDevices=, DevicePolicy=closed/strict, DeviceAllow= : would hide or
+#       block /dev/video*, /dev/i2c-*, /dev/ttyTHS*, /dev/nvhost-*, /dev/nvmap
+#   ProtectClock=yes : implies DeviceAllow=char-rtc r, i.e. a closed device policy
+#   PrivateTmp=yes   : Argus clients reach nvargus-daemon via /tmp/argus_socket
+#   MemoryDenyWriteExecute=yes : breaks JIT (CuPy/NVRTC)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/skynet /tmp
+ProtectHome=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

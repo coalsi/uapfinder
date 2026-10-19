@@ -1,0 +1,12 @@
+# /etc/udev/rules.d/99-skynet-gps.rules, written by SKY-NET deploy/jetson/setup.sh.
+# A stable /dev/gps0 for gpsd and the node, whatever the receiver is wired to.
+
+# UART receiver on the 40-pin header (JetPack 6: pins 8/10 enumerate as ttyTHS1) or the
+# device named by SKYNET_GPS_TTY.
+KERNEL=="@GPS_TTY@", SYMLINK+="gps0", GROUP="dialout", MODE="0660"
+
+# USB u-blox receivers (vendor 1546) present a CDC-ACM port.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1546", SYMLINK+="gps0", GROUP="dialout", MODE="0660"
+
+# PPS inputs: readable by chrony (root) and by members of dialout (ppstest, gpsd).
+SUBSYSTEM=="pps", GROUP="dialout", MODE="0660"
