@@ -1,9 +1,10 @@
 """Server-side records shared by the pipeline, the state backends and the API.
 
 Records are plain slotted dataclasses rather than Pydantic models: thousands
-are created per second on the ingest path, and the state backends serialise
-them with orjson in compact positional form (see ``to_row``/``from_row``) to
-keep Redis payloads small.
+are created per second on the ingest path. The Redis backend stores track
+state in compact positional form (``TrackState.to_row``/``from_row``) and
+detections as packed binary (``state.redis.pack_detection``) to keep payloads
+small.
 """
 
 from __future__ import annotations
@@ -13,7 +14,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from skynet_common.geodesy import Vec3, ecef_to_enu_vector, enu_to_azel
 
-TRACK_POINT_KEYS = ("t_ns", "lat", "lon", "alt_m", "sigma_m", "error_margin_m", "node_ids")
+PUBLIC_ALT_STEP_M = 10.0
+
+
+def public_position(lat: float, lon: float, alt_m: float, decimals: int) -> Tuple[float, float, float]:
+    """A node position as it may be published: latitude and longitude rounded
+    to ``decimals`` places (2 = about 1 km) and the height to 10 m, because
+    a precise height plus a terrain model would narrow the location down
+    within the rounded cell again."""
+    return round(lat, decimals), round(lon, decimals), round(alt_m / PUBLIC_ALT_STEP_M) * PUBLIC_ALT_STEP_M
 
 
 @dataclass(slots=True)
@@ -35,12 +44,15 @@ class NodeRecord:
 
     def public(self, decimals: int, now_ns: int, active_ns: int) -> Dict[str, Any]:
         """The API's Node object, with the position rounded for privacy."""
+        lat = lon = alt = None
+        if self.lat is not None and self.lon is not None and self.alt_m is not None:
+            lat, lon, alt = public_position(self.lat, self.lon, self.alt_m, decimals)
         return {
             "node_id": self.node_id,
             "label": self.label,
-            "lat": None if self.lat is None else round(self.lat, decimals),
-            "lon": None if self.lon is None else round(self.lon, decimals),
-            "alt_m": None if self.alt_m is None else round(self.alt_m, 1),
+            "lat": lat,
+            "lon": lon,
+            "alt_m": alt,
             "yaw_deg": self.yaw_deg,
             "pitch_deg": self.pitch_deg,
             "roll_deg": self.roll_deg,
@@ -91,14 +103,6 @@ class Detection:
     origin: Vec3
     direction: Vec3
 
-    def to_row(self) -> list:
-        return [self.t_ns, self.seq, self.track_id, self.lat, self.lon, self.alt_m, self.az_deg, self.el_deg,
-                *self.origin, *self.direction]
-
-    @classmethod
-    def from_row(cls, node_id: str, r: list) -> "Detection":
-        return cls(node_id, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], (r[8], r[9], r[10]), (r[11], r[12], r[13]))
-
 
 @dataclass(slots=True)
 class RayObs:
@@ -142,6 +146,7 @@ class Match:
     parallax_deg: float
     pair_keys: List[str]
     recv_perf_ns: int = 0  # receipt time of the packet that produced it
+    link_keys: Optional[List[str]] = None  # cached by TrackManager.link_keys
 
 
 @dataclass(slots=True)

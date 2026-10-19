@@ -121,6 +121,7 @@ class Settings:
     allow_unsigned: bool = False
     http_host: str = "0.0.0.0"
     http_port: int = 8000
+    workers: int = 1
     udp_host: str = "0.0.0.0"
     udp_port: Optional[int] = 9999
     udp_rcvbuf: int = 8 * 1024 * 1024
@@ -180,6 +181,8 @@ class Settings:
             raise ConfigError("the redis state backend needs SKYNET_REDIS_URL (or REDIS_URL / KV_URL)")
         if mode == "vercel" and backend == "memory":
             raise ConfigError("vercel mode keeps no state between invocations; use the redis backend")
+        if _int(env, "SKYNET_WORKERS", 1) > 1 and backend != "redis":
+            raise ConfigError("SKYNET_WORKERS > 1 needs the redis state backend (workers share state through it)")
 
         master = env.get("SKYNET_MASTER_KEY", "").strip()
         if master and len(master) < 32:
@@ -264,6 +267,7 @@ class Settings:
             allow_unsigned=_bool(env, "SKYNET_ALLOW_UNSIGNED", False),
             http_host=env.get("SKYNET_HTTP_HOST", "0.0.0.0"),
             http_port=_int(env, "SKYNET_HTTP_PORT", 8000),
+            workers=max(1, _int(env, "SKYNET_WORKERS", 1)),
             udp_host=env.get("SKYNET_UDP_HOST", "0.0.0.0"),
             udp_port=udp_port,
             udp_rcvbuf=_int(env, "SKYNET_UDP_RCVBUF", 8 * 1024 * 1024),

@@ -1,9 +1,9 @@
 """Counters, rates and latency percentiles behind ``/stats`` and ``/metrics``.
 
-Latencies are kept in fixed-size ring buffers of recent samples so that a
-percentile query is a bounded sort and recording a sample is two list
-writes on the hot path. Rates use per-second buckets averaged over the last
-10 s, as API.md specifies.
+Latencies are kept in fixed-size ring buffers of recent samples, so that
+recording one is a few list writes on the hot path, and ``/stats`` reports
+percentiles over the last 30 s. Rates use per-second buckets averaged over
+the last 10 s, as API.md specifies.
 
 With the Redis backend several processes (standalone workers or Vercel
 Function instances) share one view: each process periodically hands its
@@ -19,41 +19,53 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import numpy as np
+
 RATE_WINDOW_S = 10
+LATENCY_WINDOW_S = 30.0  # /stats latency percentiles cover the last 30 s
 RATE_COUNTERS = ("packets", "matches")
-_RING = 8192
+_RING = 65536  # about 6.5 s of samples at 10k msg/s
 
 
 class LatencyRing:
-    """The most recent latency samples, in milliseconds."""
+    """Recent latency samples (ms) with the second they were taken, so that
+    percentiles can cover a recent time window rather than a sample count."""
 
-    __slots__ = ("_buf", "_i", "_full")
+    __slots__ = ("_buf", "_sec", "_i", "_full")
 
     def __init__(self, size: int = _RING):
         self._buf = [0.0] * size
+        self._sec = [0] * size
         self._i = 0
         self._full = False
 
     def add(self, ms: float) -> None:
-        self._buf[self._i] = ms
-        self._i += 1
-        if self._i == len(self._buf):
-            self._i = 0
+        i = self._i
+        self._buf[i] = ms
+        self._sec[i] = int(time.monotonic())
+        i += 1
+        if i == len(self._buf):
+            i = 0
             self._full = True
+        self._i = i
 
-    def samples(self) -> List[float]:
-        return list(self._buf if self._full else self._buf[: self._i])
+    def samples(self, window_s: Optional[float] = None) -> List[float]:
+        n = len(self._buf) if self._full else self._i
+        if window_s is None:
+            return self._buf[:n]
+        since = time.monotonic() - window_s
+        return [v for v, s in zip(self._buf[:n], self._sec[:n]) if s >= since]
 
 
 def percentiles(samples: Iterable[float]) -> Dict[str, Optional[float]]:
-    data = sorted(samples)
-    if not data:
+    """p50/p95/p99/max (NumPy: sorting 65k samples in Python would stall the
+    event loop for tens of milliseconds on every /stats request)."""
+    data = np.fromiter(samples, dtype=float)
+    if data.size == 0:
         return {"p50": None, "p95": None, "p99": None, "max": None}
-
-    def pick(q: float) -> float:
-        return round(data[min(len(data) - 1, int(q * len(data)))], 4)
-
-    return {"p50": pick(0.50), "p95": pick(0.95), "p99": pick(0.99), "max": round(data[-1], 4)}
+    p50, p95, p99, top = np.percentile(data, [50, 95, 99, 100], method="lower")
+    return {"p50": round(float(p50), 4), "p95": round(float(p95), 4), "p99": round(float(p99), 4),
+            "max": round(float(top), 4)}
 
 
 @dataclass
@@ -173,8 +185,8 @@ class Stats:
             "rejected_total": dict(self.rejected),
             "matches_total": self.counters["matches"],
             "matches_per_s": round(self.rate("matches", now), 2),
-            "processing_latency_ms": percentiles(self.processing.samples()),
-            "backsignal_latency_ms": percentiles(self.backsignal.samples()),
+            "processing_latency_ms": percentiles(self.processing.samples(LATENCY_WINDOW_S)),
+            "backsignal_latency_ms": percentiles(self.backsignal.samples(LATENCY_WINDOW_S)),
             "counters": dict(self.counters),
         }
 

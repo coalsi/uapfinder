@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import secrets
 import sys
 from pathlib import Path
@@ -35,22 +36,16 @@ def _load_env_file(path: Optional[str]) -> None:
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
+        else:
+            value = re.split(r"\s+#", value, maxsplit=1)[0]  # inline comment
         os.environ.setdefault(key.strip(), value)
 
 
-def _settings(args: argparse.Namespace) -> Settings:
-    overrides = {}
-    if getattr(args, "host", None):
-        overrides["http_host"] = args.host
-    if getattr(args, "port", None):
-        overrides["http_port"] = args.port
-    if getattr(args, "udp_port", None) is not None:
-        overrides["udp_port"] = args.udp_port or None
+def _settings() -> Settings:
     try:
-        settings = Settings.from_env()
+        return Settings.from_env()
     except ConfigError as exc:
         raise SystemExit(f"configuration error: {exc}") from None
-    return settings.with_overrides(**overrides) if overrides else settings
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -58,27 +53,39 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     from .app import create_app
 
-    settings = _settings(args)
+    # Flags become environment variables so that worker processes, which
+    # build their own Settings, see them too.
+    for flag, name in (("host", "SKYNET_HTTP_HOST"), ("port", "SKYNET_HTTP_PORT"), ("udp_port", "SKYNET_UDP_PORT"),
+                       ("workers", "SKYNET_WORKERS")):
+        value = getattr(args, flag, None)
+        if value is not None:
+            os.environ[name] = str(value)
+    settings = _settings()
     if settings.mode != "standalone":
         raise SystemExit("`serve` runs the standalone server; unset SKYNET_MODE=vercel")
     if settings.master_key is None and not settings.allow_unsigned:
         logging.warning("SKYNET_MASTER_KEY is not set: every signed message will be rejected (no_key)")
-    app = create_app(settings)
-    config = uvicorn.Config(
-        app, host=settings.http_host, port=settings.http_port, loop="auto", log_level=settings.log_level,
+    common = dict(
+        host=settings.http_host, port=settings.http_port, loop="auto", log_level=settings.log_level,
         # Trust X-Forwarded-* from a local reverse proxy (Tailscale Funnel/Serve)
         # by default, from anywhere when SKYNET_TRUST_PROXY=true.
         proxy_headers=True, forwarded_allow_ips="*" if settings.trust_proxy else "127.0.0.1",
         access_log=args.access_log, ws_max_size=1 << 20,
     )
-    uvicorn.Server(config).run()
+    if settings.workers > 1:
+        if sys.platform == "darwin":
+            logging.warning("macOS does not spread UDP datagrams over SO_REUSEPORT sockets; "
+                            "all UDP traffic will reach one worker")
+        uvicorn.run("skynet_server.app:create_app", factory=True, workers=settings.workers, **common)
+    else:
+        uvicorn.Server(uvicorn.Config(create_app(settings), **common)).run()
     return 0
 
 
 def cmd_migrate(args: argparse.Namespace) -> int:
     from .persistence import MIGRATIONS_DIR, migrate
 
-    settings = _settings(args)
+    settings = _settings()
     url = args.database_url or settings.database_url_unpooled or settings.database_url
     if not url:
         raise SystemExit("set SKYNET_DATABASE_URL (or DATABASE_URL / POSTGRES_URL) or pass --database-url")
@@ -111,6 +118,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     serve.add_argument("--host", help="HTTP bind address (SKYNET_HTTP_HOST)")
     serve.add_argument("--port", type=int, help="HTTP port (SKYNET_HTTP_PORT)")
     serve.add_argument("--udp-port", type=int, help="UDP port, 0 to disable (SKYNET_UDP_PORT)")
+    serve.add_argument("--workers", type=int, help="worker processes, redis backend only (SKYNET_WORKERS)")
     serve.add_argument("--access-log", action="store_true", help="log every HTTP request")
     serve.set_defaults(func=cmd_serve)
 

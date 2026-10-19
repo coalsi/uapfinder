@@ -32,6 +32,8 @@ import numpy as np
 from skynet_common.camera import camera_basis_enu
 from skynet_common.geodesy import EARTH_MEAN_RADIUS_M, WGS84_A, WGS84_E2
 
+from .models import public_position
+
 MAX_CELLS = 10_000
 MAX_SUGGESTIONS = 10
 _MAX_CANDIDATE_SITES = 150
@@ -219,12 +221,18 @@ def _suggest(grid: _Grid, cells: np.ndarray, masks: List[np.ndarray], units: Lis
     return picks
 
 
-def camera_nodes(records: Sequence[Any], now_ns: int, active_ns: int) -> List[CameraNode]:
-    """Active nodes with complete camera geometry, from NodeRecords."""
+def camera_nodes(records: Sequence[Any], now_ns: int, active_ns: int, decimals: int) -> List[CameraNode]:
+    """Active nodes with complete camera geometry, from NodeRecords.
+
+    Positions are the rounded public ones: the edges of a node's coverage
+    (its range and minimum-elevation circles, its field of view) on a fine
+    grid would otherwise reveal where the camera stands.
+    """
     out = []
     for n in records:
         values: List[Optional[float]] = [n.lat, n.lon, n.alt_m, n.yaw_deg, n.pitch_deg, n.roll_deg, n.fov_h_deg,
                                          n.fov_v_deg]
         if n.last_seen_ns and now_ns - n.last_seen_ns <= active_ns and all(v is not None for v in values):
-            out.append(CameraNode(*values))  # type: ignore[arg-type]
+            lat, lon, alt = public_position(n.lat, n.lon, n.alt_m, decimals)
+            out.append(CameraNode(lat, lon, alt, *values[3:]))  # type: ignore[arg-type]
     return out

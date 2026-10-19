@@ -23,10 +23,14 @@ Search plans. In a dense network a packet has tens of neighbours, each
 reporting several objects, so a full search costs hundreds of candidate
 tests. Once a local track has been matched, the matchmaker remembers which
 local track each other node reported for the same object ("partners", learnt
-symmetrically from every ray pair of a match) and a *guided* search tests
-only those. A *full* search still runs every ``full_search_interval`` (to pick
-up nodes that start seeing the object) and whenever a guided search finds
-nothing. A local track whose last full search found nothing and that has no
+in both directions from every match) and a *guided* search tests only those.
+A node that starts seeing a known object finds the established observers
+with its own full search and teaches them about itself, so the periodic full
+search of an established track (every ``full_search_interval``) is only a
+safety net. A guided search that finds nothing falls back to a full one only
+when its partners have gone silent for a second or reported rays that fail
+the gate, not merely because they have not reported this frame yet (or their
+packets were shed under overload). A local track whose last full search found nothing and that has no
 partners is not searched again for ``miss_backoff``: its neighbours' own
 searches will find it as soon as they see the object too, and teach it its
 partners. The cache is per process and purely an optimisation: every result
@@ -45,7 +49,7 @@ from skynet_common.geodesy import Vec3, angle_between_deg
 from skynet_common.triangulation import Ray, gate, triangulate_rays
 
 from .config import MatchConfig
-from .fastmath import fast_gate, position_sigma_m, triangulate_many_fast
+from .fastmath import fast_gate, position_sigma_m, ray_meets_cone, triangulate_many_fast
 from .models import Detection, Match, RayObs
 from .tracks import REFINE_RATIO, SAME_FRAME_NS
 
@@ -54,6 +58,9 @@ Candidate = Tuple[Vec3, Vec3, Detection, Optional[Detection], float]
 Window = Tuple[int, int]
 
 _PARTNER_TTL_NS = 3_000_000_000
+# A partner silent this long has lost the object (or renamed its track). Shorter
+# gaps are usually lost or late packets and do not justify a full search.
+_SILENT_NS = 1_000_000_000
 _CACHE_SWEEP_EVERY = 20_000
 
 
@@ -76,7 +83,8 @@ class DetectionSource(Protocol):
 
 class NodeSamples:
     """One node's recent detections, grouped by local track, each group
-    time-sorted. ``cutoff_ns`` trims samples older than the retention."""
+    time-sorted; ``add`` ignores a detection it already holds and trims
+    samples older than ``cutoff_ns``."""
 
     __slots__ = ("tracks", "loose", "newest_ns")
 
@@ -93,15 +101,14 @@ class NodeSamples:
             if entry is None:
                 entry = self.tracks[d.track_id] = ([], [])
         ts, dets = entry
-        if not ts or d.t_ns >= ts[-1]:
-            ts.append(d.t_ns)
-            dets.append(d)
-        else:
-            i = bisect.bisect_right(ts, d.t_ns)
-            if i and ts[i - 1] == d.t_ns and dets[i - 1].seq == d.seq:
-                return  # the same detection fetched twice
-            ts.insert(i, d.t_ns)
-            dets.insert(i, d)
+        i = len(ts) if not ts or d.t_ns > ts[-1] else bisect.bisect_right(ts, d.t_ns)
+        j = i - 1
+        while j >= 0 and ts[j] == d.t_ns:
+            if dets[j].seq == d.seq:
+                return  # the same detection seen twice (e.g. fetched again)
+            j -= 1
+        ts.insert(i, d.t_ns)
+        dets.insert(i, d)
         if ts[0] < cutoff_ns:
             cut = bisect.bisect_left(ts, cutoff_ns)
             del ts[:cut]
@@ -126,50 +133,6 @@ class NodeSamples:
         return dets[bisect.bisect_left(ts, lo_ns) : bisect.bisect_right(ts, hi_ns)]
 
 
-class Prefetched:
-    """A DetectionSource over detections fetched for one batch (Redis backend)."""
-
-    __slots__ = ("nodes", "fetched")
-
-    def __init__(self) -> None:
-        self.nodes: Dict[str, NodeSamples] = {}
-        self.fetched: Dict[str, Window] = {}
-
-    def add(self, node_id: str, window: Window, dets: Iterable[Detection]) -> None:
-        """Add a node's detections for ``window`` (merged with earlier fetches)."""
-        ns = self.nodes.get(node_id)
-        if ns is None:
-            ns = self.nodes[node_id] = NodeSamples()
-        for d in dets:
-            ns.add(d, 0)
-        prev = self.fetched.get(node_id)
-        self.fetched[node_id] = window if prev is None else (min(prev[0], window[0]), max(prev[1], window[1]))
-
-    def missing(self, windows: Dict[str, Window]) -> Dict[str, Window]:
-        """The parts of ``windows`` not covered by earlier fetches (as one
-        covering window per node)."""
-        out = {}
-        for node_id, (lo, hi) in windows.items():
-            have = self.fetched.get(node_id)
-            if have is None:
-                out[node_id] = (lo, hi)
-            elif lo < have[0] or hi > have[1]:
-                out[node_id] = (min(lo, have[0]), max(hi, have[1]))
-        return out
-
-    def local_track(self, node_id: str, track_id: str) -> Optional[TrackSamples]:
-        ns = self.nodes.get(node_id)
-        return ns.tracks.get(track_id) if ns is not None else None
-
-    def local_tracks(self, node_id: str) -> Iterable[TrackSamples]:
-        ns = self.nodes.get(node_id)
-        return ns.tracks.values() if ns is not None else ()
-
-    def untracked(self, node_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
-        ns = self.nodes.get(node_id)
-        return ns.untracked(lo_ns, hi_ns) if ns is not None else ()
-
-
 @dataclass(slots=True)
 class Plan:
     """How one packet will be searched: ``guide`` maps partner node -> its
@@ -185,8 +148,6 @@ class Plan:
     # Partners that simply have not reported this frame yet do not count.
     retry: bool = False
 
-    def as_full(self) -> "Plan":
-        return Plan(self.detection, self.neighbours, None)
 
 
 def pair_key(node_a: str, seq_a: int, node_b: str, seq_b: int) -> str:
@@ -220,10 +181,18 @@ class _Partners:
         self.miss_ns = -(1 << 62)  # packet time of the last full search that found nothing
 
 
+#: node -> (camera position, optical axis, cosine of the half-angle that
+#: contains the whole field of view), all ECEF.
+Cones = Dict[str, Tuple[Vec3, Vec3, float]]
+
+
 class Matchmaker:
-    def __init__(self, cfg: MatchConfig, full_search_interval_ns: int = 2_000_000_000,
-                 miss_backoff_ns: int = 300_000_000):
+    def __init__(self, cfg: MatchConfig, full_search_interval_ns: int = 10_000_000_000,
+                 miss_backoff_ns: int = 300_000_000, cones: Optional[Cones] = None):
         self.cfg = cfg
+        # Camera cones of the nodes; a full search skips neighbours whose
+        # camera cannot see any point of the packet's line of sight.
+        self.cones: Cones = cones if cones is not None else {}
         self.gate_cfg = cfg.gate
         self.sigma_rad = math.radians(cfg.gate.angular_sigma_deg)
         # How far around the packet time neighbour detections are needed.
@@ -239,6 +208,7 @@ class Matchmaker:
         self.guided_searches = 0
         self.skipped = 0
         self.refinements_skipped = 0
+        self.cone_skipped = 0
 
     # --- planning ----------------------------------------------------------------
 
@@ -250,10 +220,10 @@ class Matchmaker:
         if not neighbours:
             return None
         if d.track_id is None:
-            return Plan(d, neighbours)
+            return self.full_plan(d, neighbours)
         p = self._partners.get((d.node_id, d.track_id))
         if p is None:
-            return Plan(d, neighbours)
+            return self.full_plan(d, neighbours)
         t = d.t_ns
         live = [(seen, nb, tid) for nb, (tid, seen) in p.by_node.items() if t - seen <= _PARTNER_TTL_NS]
         if live and t - p.full_ns < self.full_search_interval_ns:
@@ -264,7 +234,23 @@ class Matchmaker:
         if not live and 0 <= t - p.miss_ns < self.miss_backoff_ns:
             self.skipped += 1
             return None
-        return Plan(d, neighbours)
+        return self.full_plan(d, neighbours)
+
+    def full_plan(self, d: Detection, neighbours: Sequence[str]) -> Plan:
+        """A full search over the neighbours that could have seen along the
+        packet's line of sight (nodes without known camera geometry are kept)."""
+        cones = self.cones
+        if not cones:
+            return Plan(d, neighbours)
+        g = self.gate_cfg
+        o, v = d.origin, d.direction
+        kept = []
+        for nb in neighbours:
+            cone = cones.get(nb)
+            if cone is None or ray_meets_cone(o, v, cone[0], cone[1], cone[2], g.min_range_m, g.max_range_m):
+                kept.append(nb)
+        self.cone_skipped += len(neighbours) - len(kept)
+        return Plan(d, kept)
 
     def windows(self, plans: Iterable[Plan]) -> Dict[str, Window]:
         """Union time window per node over the nodes the plans will search."""
@@ -311,11 +297,16 @@ class Matchmaker:
     def candidates(self, t_ns: int, node_id: str, source: DetectionSource) -> List[Candidate]:
         """Every candidate line of sight of one node at time ``t_ns``."""
         out = []
+        window = self.cfg.window_ns
+        stale = t_ns - window
         for samples in source.local_tracks(node_id):
+            # Without a sample in the last window and nothing later, a track
+            # cannot give a candidate: skip it without the bracket search.
+            if samples[0][-1] < stale:
+                continue
             c = self.track_candidate(t_ns, samples)
             if c is not None:
                 out.append(c)
-        window = self.cfg.window_ns
         for x in source.untracked(node_id, t_ns - window, t_ns + window):
             out.append((x.origin, x.direction, x, None, 0.0))
         return out
@@ -335,7 +326,7 @@ class Matchmaker:
     def match(self, plan: Plan, source: DetectionSource) -> Optional[Match]:
         """Search one packet. A guided search that finds nothing returns None
         without side effects; when ``plan.retry`` is then set, the caller
-        should search again with ``plan.as_full()``."""
+        should search again with ``full_plan``."""
         d = plan.detection
         t = d.t_ns
         best: List[Tuple[float, Candidate]] = []
@@ -345,8 +336,8 @@ class Matchmaker:
             heard = rejected = False
             for nb, tid in plan.guide.items():
                 samples = source.local_track(nb, tid)
-                if samples is None or t - samples[0][-1] > self.span_ns:
-                    continue  # the partner has not reported this track recently
+                if samples is None or t - samples[0][-1] > _SILENT_NS:
+                    continue  # the partner has stopped reporting this track
                 heard = True
                 cand = self.track_candidate(t, samples)
                 if cand is None:

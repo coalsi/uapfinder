@@ -193,3 +193,35 @@ def fast_gate(
     if not (cfg.min_alt_m <= r - surface <= cfg.max_alt_m):
         return None
     return miss / max(sigma, 1e-6)
+
+
+def ray_meets_cone(o: Vec3, d: Vec3, apex: Vec3, axis: Vec3, cos_half: float, t0: float, t1: float) -> bool:
+    """Does the segment o + t d (t0 <= t <= t1) enter the cone at ``apex``
+    around unit ``axis`` with half-angle acos(cos_half)?
+
+    Used to skip, in a full search, neighbours whose camera cannot have seen
+    anything along the packet's line of sight. The cosine of the angle between
+    the axis and the direction from the apex to the point, f(t) =
+    (a + b t) / sqrt(c + 2 e t + t^2), has one interior extremum at
+    t* = (a e - b c) / (b e - a), so its maximum on [t0, t1] is at t0, t1 or t*.
+    """
+    wx, wy, wz = o[0] - apex[0], o[1] - apex[1], o[2] - apex[2]
+    ax, ay, az = axis
+    a = wx * ax + wy * ay + wz * az
+    b = d[0] * ax + d[1] * ay + d[2] * az
+    c = wx * wx + wy * wy + wz * wz
+    e = wx * d[0] + wy * d[1] + wz * d[2]
+    best = -1.0
+    ts = [t0, t1]
+    denom = b * e - a
+    if denom != 0.0:
+        t_star = (a * e - b * c) / denom
+        if t0 < t_star < t1:
+            ts.append(t_star)
+    for t in ts:
+        r2 = c + 2.0 * e * t + t * t
+        if r2 > 0.0:
+            f = (a + b * t) / math.sqrt(r2)
+            if f > best:
+                best = f
+    return best >= cos_half

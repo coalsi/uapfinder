@@ -28,12 +28,15 @@ Round trips: neighbour lists are cached per process for a few seconds (nodes
 rarely move), so a batch normally costs one pipeline for admission plus the
 neighbour detection fetch (store first, then query, in one pipeline), and
 only batches with matches pay for claims, links, tracks and the commit.
+Detections are immutable, so each process caches the ones it has stored or
+fetched and only asks Redis for what is new (``_DetectionCache``).
 Node-record writes are skipped when nothing changed and last-seen updates
 are throttled to one per second per node and process.
 """
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 import struct
 import time
@@ -43,7 +46,7 @@ import orjson
 
 from skynet_common.geodesy import haversine_m
 
-from ..matchmaker import DetectionSource, Prefetched, Window
+from ..matchmaker import DetectionSource, NodeSamples, TrackSamples, Window
 from ..models import ClipRecord, Commit, Detection, NodeRecord, TrackState
 from ..stats import RATE_WINDOW_S, StatsDelta, percentiles
 from .base import Admission, AdmitResult, StateBackend, UdpAddr
@@ -53,12 +56,43 @@ _NEIGHBOUR_TTL_S = 5.0
 _SEEN_EVERY_NS = 1_000_000_000
 _PRUNE_EVERY_NS = 1_000_000_000
 _MOVE_REINDEX_M = 50.0
+_LATE_ARRIVAL_NS = 100_000_000
 _GEO_MAX_LAT = 85.05112878  # GEOADD's latitude limit (Web Mercator)
 _CLIP_TTL_MS = 30 * 24 * 3600 * 1000
 _COMMAND_TTL_MS = 3600 * 1000
 _MAX_COMMANDS_PER_NODE = 1000
 _LATENCY_SAMPLES = 4096
 _NODE_FLOATS = ("lat", "lon", "alt_m", "yaw_deg", "pitch_deg", "roll_deg", "fov_h_deg", "fov_v_deg")
+
+
+_CLAIM_LUA = """
+local out = {}
+for i, key in ipairs(KEYS) do
+  out[i] = redis.call('SET', key, '1', 'NX', 'PX', ARGV[1]) and 1 or 0
+end
+return out
+"""
+
+
+# KEYS: replay and detection key of each item; ARGV: now (us), then per item
+# the replay member, detection score and packed detection ("" for heartbeats).
+# Returns 1 per fresh item and 0 per replay; replays store nothing.
+_ADMIT_LUA = """
+local out = {}
+for i = 1, #KEYS / 2 do
+  local fresh = redis.call('ZADD', KEYS[2 * i - 1], 'NX', ARGV[1], ARGV[3 * i - 1])
+  out[i] = fresh
+  if fresh == 1 and ARGV[3 * i + 1] ~= '' then
+    redis.call('ZADD', KEYS[2 * i], ARGV[3 * i], ARGV[3 * i + 1])
+  end
+end
+return out
+"""
+
+
+_SCRIPTS = {"claim": _CLAIM_LUA, "admit": _ADMIT_LUA}
+# EVALSHA names a script by the SHA-1 of its source.
+_SHAS = {name: hashlib.sha1(source.encode()).hexdigest() for name, source in _SCRIPTS.items()}
 
 
 def pack_detection(d: Detection) -> bytes:
@@ -96,6 +130,75 @@ def _node_from_hash(node_id: str, h: Dict[bytes, bytes], seen_us: Optional[float
     return node
 
 
+class _DetectionCache:
+    """Detections this process has stored or fetched, as a DetectionSource.
+
+    Detections never change once stored, so each one is fetched from Redis
+    once per process: ``coverage[node] = (lo, hi)`` records that every
+    detection of that node with lo <= t_ns <= hi is cached. ``hi`` trails the
+    wall clock by ``_LATE_ARRIVAL_NS``, so detections another instance stores
+    a little late are still fetched. One that arrives later still is missed
+    by this process only: the instance that stored it queried after storing
+    and so matched it against this process's detections.
+    """
+
+    def __init__(self, retention_ns: int):
+        self.retention_ns = retention_ns
+        self.nodes: Dict[str, NodeSamples] = {}
+        self.coverage: Dict[str, Tuple[int, int]] = {}
+
+    def add(self, d: Detection) -> None:
+        ns = self.nodes.get(d.node_id)
+        if ns is None:
+            ns = self.nodes[d.node_id] = NodeSamples()
+        ns.add(d, d.t_ns - self.retention_ns)
+
+    def needed(self, windows: Dict[str, Window]) -> Dict[str, Window]:
+        """The parts of ``windows`` that must still be fetched."""
+        out = {}
+        for node_id, (lo, hi) in windows.items():
+            cov = self.coverage.get(node_id)
+            if cov is not None and cov[0] <= lo <= cov[1]:
+                if hi > cov[1]:
+                    out[node_id] = (cov[1], hi)
+            else:
+                out[node_id] = (lo, hi)
+        return out
+
+    def fetched(self, node_id: str, window: Window, now_ns: int) -> None:
+        lo, hi = window
+        complete = min(hi, now_ns - _LATE_ARRIVAL_NS)
+        cov = self.coverage.get(node_id)
+        if cov is not None and cov[0] <= lo <= cov[1]:
+            self.coverage[node_id] = (cov[0], max(cov[1], complete))
+        elif complete >= lo:
+            self.coverage[node_id] = (lo, complete)
+
+    def prune(self, now_ns: int) -> None:
+        cutoff = now_ns - 2 * self.retention_ns
+        for node_id in [n for n, ns in self.nodes.items() if ns.newest_ns < cutoff]:
+            del self.nodes[node_id]
+            self.coverage.pop(node_id, None)
+        for node_id, ns in self.nodes.items():
+            floor = ns.newest_ns - self.retention_ns
+            ns.prune(floor)
+            cov = self.coverage.get(node_id)
+            if cov is not None and cov[0] < floor:
+                self.coverage[node_id] = (floor, cov[1]) if cov[1] >= floor else (floor, floor)
+
+    def local_track(self, node_id: str, track_id: str) -> Optional[TrackSamples]:
+        ns = self.nodes.get(node_id)
+        return ns.tracks.get(track_id) if ns is not None else None
+
+    def local_tracks(self, node_id: str) -> Iterable[TrackSamples]:
+        ns = self.nodes.get(node_id)
+        return ns.tracks.values() if ns is not None else ()
+
+    def untracked(self, node_id: str, lo_ns: int, hi_ns: int) -> Sequence[Detection]:
+        ns = self.nodes.get(node_id)
+        return ns.untracked(lo_ns, hi_ns) if ns is not None else ()
+
+
 class RedisState(StateBackend):
     name = "redis"
     prefetch = True
@@ -123,6 +226,9 @@ class RedisState(StateBackend):
         self._newest: Dict[str, int] = {}
         self._known: set = set()
         self._next_track_prune = 0.0
+        self._cache = _DetectionCache(detection_retention_ns)
+        self._links_written: Dict[str, Tuple[str, float]] = {}
+        self._next_cache_prune = 0
 
     def k(self, *parts: str) -> str:
         return self.p + ":".join(parts)
@@ -134,6 +240,24 @@ class RedisState(StateBackend):
         # connections that a serverless freeze or a NAT silently dropped.
         self.r = aioredis.Redis.from_url(self.url, decode_responses=False, socket_keepalive=True,
                                          health_check_interval=30, socket_connect_timeout=5, socket_timeout=10)
+
+    async def _execute(self, pipe: Any) -> List[Any]:
+        """Execute a pipeline that may contain EVALSHA calls. If Redis does
+        not know a script (first use, or after a restart) the scripts are
+        loaded and the commands sent again; every queued command is
+        idempotent (NX writes, reads, same-value updates), so that is safe."""
+        from redis.exceptions import NoScriptError
+
+        stack = list(pipe.command_stack)
+        try:
+            return await pipe.execute()
+        except NoScriptError:
+            for source in _SCRIPTS.values():
+                await self.r.script_load(source)
+            again = self.r.pipeline(transaction=False)
+            for args, options in stack:
+                again.execute_command(*args, **options)
+            return await again.execute()
 
     async def close(self) -> None:
         if self.r is not None:
@@ -184,15 +308,22 @@ class RedisState(StateBackend):
         p = self.k
         now_us = _us(now_ns)
         pipe = self.r.pipeline(transaction=False)
-        n = 0
-        replay_at: List[int] = []
+        # Replay checks and detection writes for the whole batch in one script call.
+        keys: List[str] = []
+        args: List[Any] = [now_us]
+        for item in items:
+            u, d = item.update, item.detection
+            keys += (p("r", u.node_id), p("d", u.node_id))
+            if d is None:
+                args += (f"{item.seq}:{u.t_ns}", 0, b"")
+            else:
+                args += (f"{item.seq}:{u.t_ns}", _us(d.t_ns), pack_detection(d))
+        pipe.evalsha(_SHAS["admit"], len(keys), *keys, *args)
+        n = 1
         heartbeat_at: Dict[str, int] = {}
         for item in items:
             u = item.update
             node_id = u.node_id
-            pipe.zadd(p("r", node_id), {f"{item.seq}:{u.t_ns}": now_us}, nx=True)
-            replay_at.append(n)
-            n += 1
             if node_id not in self._known:
                 pipe.sadd(p("nodes"), node_id)
                 n += 1
@@ -224,8 +355,7 @@ class RedisState(StateBackend):
                 n += 1
             d = item.detection
             if d is not None:
-                pipe.zadd(p("d", node_id), {pack_detection(d): _us(d.t_ns)})
-                n += 1
+                self._cache.add(d)  # a replay is the same detection, so this is idempotent
                 if d.t_ns > self._newest.get(node_id, 0):
                     self._newest[node_id] = d.t_ns
             if now_ns - self._pruned.get(node_id, 0) >= _PRUNE_EVERY_NS:
@@ -236,38 +366,46 @@ class RedisState(StateBackend):
                 pipe.zremrangebyscore(p("r", node_id), "-inf", f"({_us(now_ns - self.replay_window_ns)}")
                 pipe.pexpire(p("r", node_id), self.replay_window_ns // 1_000_000)
                 n += 4
-        fetch_order = list(windows.items()) if windows else []
+        if now_ns >= self._next_cache_prune:
+            self._next_cache_prune = now_ns + _PRUNE_EVERY_NS
+            self._cache.prune(now_ns)
+        # Queued after this batch's own writes: store first, then query.
+        fetch_order = list(self._cache.needed(windows).items()) if windows else []
         for node_id, (lo, hi) in fetch_order:
             pipe.zrangebyscore(p("d", node_id), _us(lo), _us(hi) + 1)
-        res = await pipe.execute()
-        fresh = [res[i] == 1 for i in replay_at]
+        res = await self._execute(pipe)
+        fresh = [r == 1 for r in res[0]]
         refreshed: Dict[str, NodeRecord] = {}
         for node_id, i in heartbeat_at.items():
             node = _node_from_hash(node_id, res[i], now_us)
             refreshed[node_id] = node
-        source = Prefetched()
-        for (node_id, window), members in zip(fetch_order, res[len(res) - len(fetch_order):]):
-            source.add(node_id, window, (unpack_detection(node_id, m) for m in members))
-        return AdmitResult(fresh, source, refreshed)
+        self._absorb(fetch_order, res[len(res) - len(fetch_order):], now_ns)
+        return AdmitResult(fresh, self._cache, refreshed)
+
+    def _absorb(self, order: List[Tuple[str, Window]], results: List[List[bytes]], now_ns: int) -> None:
+        cache = self._cache
+        for (node_id, window), members in zip(order, results):
+            for m in members:
+                cache.add(unpack_detection(node_id, m))
+            cache.fetched(node_id, window, now_ns)
 
     async def fetch_more(self, source: DetectionSource, windows: Dict[str, Window]) -> None:
-        assert isinstance(source, Prefetched)
-        need = list(source.missing(windows).items())
+        need = list(self._cache.needed(windows).items())
         if not need:
             return
         pipe = self.r.pipeline(transaction=False)
         for node_id, (lo, hi) in need:
             pipe.zrangebyscore(self.k("d", node_id), _us(lo), _us(hi) + 1)
-        for (node_id, window), members in zip(need, await pipe.execute()):
-            source.add(node_id, window, (unpack_detection(node_id, m) for m in members))
+        self._absorb(need, await pipe.execute(), time.time_ns())
 
     async def claim(self, keys: Sequence[str], ttl_ms: int) -> List[bool]:
         if not keys:
             return []
+        # One script call instead of one SET NX per key: the per-command
+        # client overhead dominates at thousands of claims per second.
         pipe = self.r.pipeline(transaction=False)
-        for key in keys:
-            pipe.set(self.k("p", key), b"1", px=ttl_ms, nx=True)
-        return [bool(r) for r in await pipe.execute()]
+        pipe.evalsha(_SHAS["claim"], len(keys), *[self.k("p", key) for key in keys], ttl_ms)
+        return [bool(r) for r in (await self._execute(pipe))[0]]
 
     async def get_links(self, keys: Sequence[str]) -> Dict[str, str]:
         if not keys:
@@ -286,9 +424,18 @@ class RedisState(StateBackend):
         p = self.k
         pipe = self.r.pipeline(transaction=False)
         n = 0
+        mono = time.monotonic()
+        refresh_s = link_ttl_ms / 4000.0
         for key, tid in commit.links.items():
-            pipe.set(p("l", key), tid, px=link_ttl_ms)
-            n += 1
+            # Links are rewritten by nearly every match; skip writes that would
+            # neither change the value nor matter for its expiry yet.
+            prev = self._links_written.get(key)
+            if prev is None or prev[0] != tid or mono - prev[1] >= refresh_s:
+                self._links_written[key] = (tid, mono)
+                pipe.set(p("l", key), tid, px=link_ttl_ms)
+                n += 1
+        if len(self._links_written) > 200_000:
+            self._links_written = {k: v for k, v in self._links_written.items() if mono - v[1] < 4 * refresh_s}
         retention = self.track_retention_ms
         for tid, track in commit.tracks.items():
             pipe.set(p("t", tid), orjson.dumps(track.to_row()), px=retention)
@@ -312,7 +459,6 @@ class RedisState(StateBackend):
             n += 1
         if stats is not None and not stats.is_empty():
             n += self._stats_commands(pipe, stats)
-        mono = time.monotonic()
         if mono >= self._next_track_prune:
             self._next_track_prune = mono + 60.0
             pipe.zremrangebyscore(p("ti"), "-inf", f"({_us(time.time_ns()) - retention * 1000}")

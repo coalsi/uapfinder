@@ -21,6 +21,7 @@ receipt-to-``sendto`` time is the back-signal latency in ``/stats``.
 from __future__ import annotations
 
 import logging
+import math
 import secrets
 import socket
 import time
@@ -28,14 +29,16 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Sequence, Set, Tuple
 from urllib.parse import urlsplit
 
-from skynet_common.geodesy import azel_to_ecef_unit, geodetic_to_ecef
+from skynet_common.camera import camera_basis_enu
+from skynet_common.geodesy import azel_to_ecef_unit, enu_to_ecef_vector, geodetic_to_ecef, haversine_m, look_angles
 from skynet_common.protocol import Heartbeat, ProtocolError, Telemetry, encode_signed
 
 from .config import Settings
 from .decode import Decoder, Message
 from .live import EventHub
-from .matchmaker import Matchmaker, Plan
-from .models import ClipRecord, Commit, Detection, Match, NodeRecord, NodeUpdate, TrackState, track_point
+from .matchmaker import Cones, Matchmaker, Plan
+from .models import (ClipRecord, Commit, Detection, Match, NodeRecord, NodeUpdate, RayObs, TrackState, public_position,
+                     track_point)
 from .persistence import BatchWriter, Database, DbBatch
 from .state.base import Admission, StateBackend, UdpAddr
 from .stats import Stats
@@ -46,10 +49,23 @@ log = logging.getLogger("skynet.engine")
 PAIR_PREFIX = "p:"
 
 
+def public_ray(r: RayObs, lat: float, lon: float, alt_m: float, decimals: int) -> Dict[str, Any]:
+    """A ray as published: from the rounded node position to the published
+    point. The measured line of sight is never published, since a few of
+    them back-projected through their 3D points would locate the camera to
+    within metres despite the rounding (it is kept in the database only)."""
+    node_lat, node_lon, node_alt = public_position(r.lat, r.lon, r.alt_m, decimals)
+    az, el, _ = look_angles(node_lat, node_lon, node_alt, lat, lon, alt_m)
+    return {"node_id": r.node_id, "az_deg": round(az, 4), "el_deg": round(el, 4), "node_lat": node_lat,
+            "node_lon": node_lon, "node_alt_m": node_alt}
+
+
 def is_local_host(host: Optional[str]) -> bool:
     """Loopback, unspecified or empty host names, which a remote node cannot use."""
     return not host or host in ("localhost", "0.0.0.0", "::", "::1") or host.startswith("127.")
 _UDP_SHARE_REFRESH_NS = 20_000_000_000
+# Attitude and GPS errors: the view cone used for pruning is this much wider.
+_CONE_MARGIN_DEG = 3.0
 
 
 class DatagramSender(Protocol):
@@ -90,12 +106,16 @@ class Engine:
         self.db = db
         self.writer = writer
         self.decoder = Decoder(settings.master_key, not settings.allow_unsigned, settings.freshness_ns)
-        self.matchmaker = Matchmaker(settings.match)
+        self.cones: Cones = {}
+        self._cone_inputs: Dict[str, Tuple[float, ...]] = {}
+        self._fov: Dict[str, Tuple[float, float]] = {}
+        self.matchmaker = Matchmaker(settings.match, cones=self.cones)
         self.tracks = TrackManager(settings.tracks)
         self.shared_state = state.name != "memory"
         self.transport: Optional[DatagramSender] = None  # set by the UDP listener
         self._udp_book: Dict[str, Tuple[UdpAddr, int]] = {}
         self._udp_shared: Dict[str, Tuple[UdpAddr, int]] = {}
+        self._known_nodes: Set[str] = set()
 
     # --- helpers -------------------------------------------------------------
 
@@ -165,6 +185,27 @@ class Engine:
                             o.pitch_deg, o.roll_deg, msg.camera.fov_h_deg, msg.camera.fov_v_deg, msg.status,
                             msg.software_version)
         return Admission(update, msg.seq, None)
+
+    def _update_cone(self, u: NodeUpdate) -> None:
+        """Keep the node's camera cone (for full-search pruning) current."""
+        if u.fov_h_deg is not None and u.fov_v_deg is not None:
+            self._fov[u.node_id] = (u.fov_h_deg, u.fov_v_deg)
+        fov = self._fov.get(u.node_id)
+        if fov is None:
+            return  # unknown until the first heartbeat: the node is always searched
+        inputs = (u.lat, u.lon, u.alt_m, u.yaw_deg, u.pitch_deg, u.roll_deg, fov[0], fov[1])
+        if self._cone_inputs.get(u.node_id) == inputs:
+            return
+        self._cone_inputs[u.node_id] = inputs
+        half = math.degrees(math.atan(math.hypot(math.tan(math.radians(min(fov[0], 179.0)) / 2.0),
+                                                 math.tan(math.radians(min(fov[1], 179.0)) / 2.0))))
+        half += _CONE_MARGIN_DEG
+        if half >= 90.0:
+            self.cones.pop(u.node_id, None)  # (near) hemispherical view: no pruning
+            return
+        _, _, forward = camera_basis_enu(u.yaw_deg, u.pitch_deg, u.roll_deg)
+        self.cones[u.node_id] = (geodetic_to_ecef(u.lat, u.lon, u.alt_m),
+                                 enu_to_ecef_vector(u.lat, u.lon, forward), math.cos(math.radians(half)))
 
     def _note_udp(self, node_id: str, addr: UdpAddr, now_ns: int, commit: Commit) -> None:
         self._udp_book[node_id] = (addr, now_ns)
@@ -238,6 +279,8 @@ class Engine:
         reporters = {p.msg.node_id: (p.admission.update.lat, p.admission.update.lon)
                      for p in pending if p.admission.detection is not None}
         neighbours = await self.state.neighbours(reporters, self.settings.match.radius_m, now_ns) if reporters else {}
+        if reporters.keys() - self._known_nodes:
+            neighbours = self._with_new_reporters(reporters, neighbours)
         for p in pending:
             d = p.admission.detection
             if d is not None:
@@ -255,6 +298,7 @@ class Engine:
                 st.reject("replay")
                 continue
             out.accepted += 1
+            self._update_cone(p.admission.update)
             item = items[p.index]
             if item.addr is not None:
                 # Only after the replay check: a replayed datagram from another
@@ -267,6 +311,7 @@ class Engine:
                     db.detections.append(d)
                 if p.plan is not None:
                     plans.append((p.plan, item.recv_perf_ns))
+        self._known_nodes.update(p.msg.node_id for p in pending)
         st.count("packets", out.accepted)
         st.count("telemetry", telemetry)
         st.count("heartbeats", len(admit.nodes))
@@ -274,6 +319,12 @@ class Engine:
             commit.events.append({"type": "node", "t_ns": now_ns, "data": self.public_node(node, now_ns)})
             db.nodes[node.node_id] = node
 
+        guided = sum(1 for plan, _ in plans if plan.guide is not None)
+        st.count("searches_guided", guided)
+        st.count("searches_full", len(plans) - guided)
+        skipped = mm.cone_skipped
+        mm.cone_skipped = 0
+        st.count("neighbours_outside_view", skipped)
         found: List[Match] = []
         retry: List[Tuple[Plan, int]] = []
         for plan, recv_perf in plans:
@@ -282,8 +333,9 @@ class Engine:
                 m.recv_perf_ns = recv_perf
                 found.append(m)
             elif plan.retry:
-                retry.append((plan.as_full(), recv_perf))
+                retry.append((mm.full_plan(plan.detection, plan.neighbours), recv_perf))
         if retry:
+            st.count("searches_full_retry", len(retry))
             if self.state.prefetch:
                 await self.state.fetch_more(admit.source, mm.windows(p for p, _ in retry))
             for plan, recv_perf in retry:
@@ -299,6 +351,22 @@ class Engine:
         out.matches = len(matches)
         st.count("matches", len(matches))
         return await self._link_tracks(matches, commit, db, now_ns, request_base)
+
+    def _with_new_reporters(self, reporters: Dict[str, Tuple[float, float]], neighbours: Dict[str, List[str]]
+                            ) -> Dict[str, List[str]]:
+        """Neighbour lists that also include reporters of this batch the
+        spatial index cannot know yet (nodes this process has not seen
+        before), so a new node's first packets can already be matched."""
+        radius = self.settings.match.radius_m
+        out = {node: list(ids) for node, ids in neighbours.items()}
+        for new in reporters.keys() - self._known_nodes:
+            lat, lon = reporters[new]
+            for other, (olat, olon) in reporters.items():
+                if other != new and haversine_m(lat, lon, olat, olon) <= radius:
+                    for a, b in ((new, other), (other, new)):
+                        if b not in out.setdefault(a, []):
+                            out[a].append(b)
+        return out
 
     async def _claim(self, found: List[Match]) -> List[Match]:
         """Keep a match only if every detection pair it contributes is new: of
@@ -353,22 +421,18 @@ class Engine:
                 continue
             self.matchmaker.note_recorded(m)
             node_ids = [r.node_id for r in m.rays]
+            lat, lon, alt = round(m.lat, 7), round(m.lon, 7), round(m.alt_m, 2)
             data = {
                 "event_id": event_id,
                 "track_id": track.track_id,
                 "t_ns": m.t_ns,
-                "lat": round(m.lat, 7),
-                "lon": round(m.lon, 7),
-                "alt_m": round(m.alt_m, 2),
+                "lat": lat,
+                "lon": lon,
+                "alt_m": alt,
                 "sigma_m": round(m.sigma_m, 2),
                 "error_margin_m": round(m.error_margin_m, 2),
                 "parallax_deg": round(m.parallax_deg, 3),
-                "rays": [
-                    {"node_id": r.node_id, "az_deg": round(r.azel()[0], 4), "el_deg": round(r.azel()[1], 4),
-                     "node_lat": round(r.lat, decimals), "node_lon": round(r.lon, decimals),
-                     "node_alt_m": round(r.alt_m, 1)}
-                    for r in m.rays
-                ],
+                "rays": [public_ray(r, lat, lon, alt, decimals) for r in m.rays],
             }
             commit.events.append({"type": "triangulation", "t_ns": m.t_ns, "data": data})
             commit.new_points.setdefault(track.track_id, []).append(

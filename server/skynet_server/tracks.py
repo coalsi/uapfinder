@@ -57,7 +57,7 @@ FLAG_ORDER = ("hypersonic", "high_g", "ballistic", "stationary")
 _HISTORY_SLOT_S = 1.0
 _HISTORY_SPAN_S = 31.0
 _BALLISTIC_SPAN_S = 10.0
-_FIT_INTERVAL_NS = 250_000_000
+_FIT_INTERVAL_NS = 500_000_000
 _LONG_FIT_INTERVAL_NS = 1_000_000_000
 _SPEED_WINDOW_S = 1.0
 _ACCEL_MIN_POINTS = 12
@@ -229,7 +229,10 @@ class TrackManager:
 
     @staticmethod
     def link_keys(m: Match) -> List[str]:
-        return [f"{r.node_id}|{r.track_id}" for r in m.rays if r.track_id is not None]
+        """``"<node>|<local track>"`` of each ray (computed once per match)."""
+        if m.link_keys is None:
+            m.link_keys = [f"{r.node_id}|{r.track_id}" for r in m.rays if r.track_id is not None]
+        return m.link_keys
 
     def assign(self, matches: Sequence[Match], links: Dict[str, str], tracks: Dict[str, TrackState],
                now_ns: int) -> List[Optional[TrackUpdate]]:

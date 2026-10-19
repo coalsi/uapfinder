@@ -19,6 +19,8 @@ import math
 import time
 from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import orjson
+
 from skynet_common.geodesy import haversine_m
 
 from ..matchmaker import NodeSamples, TrackSamples, Window
@@ -36,34 +38,43 @@ PointTuple = Tuple[int, float, float, float, float, float, Tuple[str, ...]]
 
 
 class _Expiring:
-    """Keys sharing one TTL, oldest first: key -> (value, expiry_ns).
+    """Keys sharing one TTL, oldest first: key -> expiry_ns, plus an optional value.
 
     An OrderedDict, not a dict: finding the first key of a plain dict after
     many deletions from its front walks over the deleted slots, which makes
-    front-pruning quadratic.
+    front-pruning quadratic. Expiries are plain ints (and values are only
+    stored when given) because hundreds of thousands of small tuples would
+    make every full garbage collection pause the event loop.
     """
 
-    __slots__ = ("ttl_ns", "items")
+    __slots__ = ("ttl_ns", "expiry", "values")
 
     def __init__(self, ttl_ns: int):
         self.ttl_ns = ttl_ns
-        self.items: "collections.OrderedDict[str, Tuple[Any, int]]" = collections.OrderedDict()
+        self.expiry: "collections.OrderedDict[str, int]" = collections.OrderedDict()
+        self.values: Dict[str, Any] = {}
 
     def prune(self, now_ns: int) -> None:
-        items = self.items
-        while items:
-            key, (_, expiry) = next(iter(items.items()))
-            if expiry > now_ns:
+        expiry, values = self.expiry, self.values
+        while expiry:
+            key, until = next(iter(expiry.items()))
+            if until > now_ns:
                 break
-            items.popitem(last=False)
+            expiry.popitem(last=False)
+            values.pop(key, None)
 
-    def put(self, key: str, value: Any, now_ns: int) -> None:
-        self.items[key] = (value, now_ns + self.ttl_ns)
-        self.items.move_to_end(key)  # keep expiry order
+    def put(self, key: str, now_ns: int, value: Any = None) -> None:
+        self.expiry[key] = now_ns + self.ttl_ns
+        self.expiry.move_to_end(key)  # keep expiry order
+        if value is not None:
+            self.values[key] = value
+
+    def live(self, key: str, now_ns: int) -> bool:
+        until = self.expiry.get(key)
+        return until is not None and until > now_ns
 
     def get(self, key: str, now_ns: int) -> Optional[Any]:
-        entry = self.items.get(key)
-        return entry[0] if entry is not None and entry[1] > now_ns else None
+        return self.values.get(key) if self.live(key, now_ns) else None
 
 
 class MemoryState(StateBackend):
@@ -85,12 +96,14 @@ class MemoryState(StateBackend):
         self._grid_version = 0
         self._neighbour_cache: Dict[str, Tuple[int, float, List[str]]] = {}
         self._detections: Dict[str, NodeSamples] = {}
-        self._replay: Dict[str, "collections.OrderedDict[Tuple[int, int], int]"] = {}
+        # node -> OrderedDict of (timestamp_ns << 64 | seq) -> first seen (ints, not
+        # tuples: see _Expiring).
+        self._replay: Dict[str, "collections.OrderedDict[int, int]"] = {}
         self._claims: Dict[int, _Expiring] = {}
         self._links: Dict[int, _Expiring] = {}
         self.tracks: Dict[str, TrackState] = {}
         self._points: Dict[str, List[PointTuple]] = {}
-        self._events: List[Dict[str, Any]] = []
+        self._events: List[bytes] = []
         self._event_keys: List[Tuple[int, int]] = []
         self._last_event = (0, -1)
         self._commands: Dict[str, List[str]] = {}
@@ -215,7 +228,7 @@ class MemoryState(StateBackend):
             seen = self._replay.get(u.node_id)
             if seen is None:
                 seen = self._replay[u.node_id] = collections.OrderedDict()
-            key = (item.seq, u.t_ns)
+            key = (u.t_ns << 64) | item.seq
             if key in seen:
                 fresh.append(False)
                 continue
@@ -250,10 +263,10 @@ class MemoryState(StateBackend):
         now = time.time_ns()
         out = []
         for key in keys:
-            if claims.get(key, now) is not None:
+            if claims.live(key, now):
                 out.append(False)
             else:
-                claims.put(key, True, now)
+                claims.put(key, now)
                 out.append(True)
         return out
 
@@ -284,7 +297,7 @@ class MemoryState(StateBackend):
                 links = self._links[link_ttl_ms] = _Expiring(link_ttl_ms * 1_000_000)
             now = time.time_ns()
             for key, tid in commit.links.items():
-                links.put(key, tid, now)
+                links.put(key, now, tid)
         for tid, track in commit.tracks.items():
             self.tracks[tid] = track
         for tid, points in commit.new_points.items():
@@ -304,7 +317,9 @@ class MemoryState(StateBackend):
         for event in commit.events:
             key = self._next_event_id()
             stored = {"id": f"{key[0]}-{key[1]}", **event}
-            self._events.append(stored)
+            # Kept serialised: thousands of nested dicts would slow every
+            # full garbage collection; readers parse the few they return.
+            self._events.append(orjson.dumps(stored))
             self._event_keys.append(key)
             out.append(stored)
         if len(self._events) > 2 * self.events_maxlen:
@@ -365,12 +380,17 @@ class MemoryState(StateBackend):
 
     async def events_after(self, cursor: Optional[str], limit: int) -> List[Dict[str, Any]]:
         if cursor is None:
-            return self._events[-limit:] if limit else []
-        i = bisect.bisect_right(self._event_keys, event_id_key(cursor))
-        return self._events[i : i + limit]
+            found = self._events[-limit:] if limit else []
+        else:
+            i = bisect.bisect_right(self._event_keys, event_id_key(cursor))
+            found = self._events[i : i + limit]
+        return [orjson.loads(e) for e in found]
 
     async def last_event_id(self) -> Optional[str]:
-        return self._events[-1]["id"] if self._events else None
+        if not self._event_keys:
+            return None
+        ms, seq = self._event_keys[-1]
+        return f"{ms}-{seq}"
 
     # --- commands and clips ------------------------------------------------------
 

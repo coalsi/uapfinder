@@ -18,6 +18,8 @@ works under servers that skip the ASGI lifespan.
 from __future__ import annotations
 
 import asyncio
+import gc
+import hashlib
 import hmac
 import logging
 import re
@@ -32,14 +34,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from skynet_common.protocol import MAX_BATCH_LINES, MAX_DATAGRAM_BYTES, verify_http_request
+from skynet_common.protocol import MAX_BATCH_LINES, MAX_DATAGRAM_BYTES
 
 from . import __version__
 from .config import Settings
 from .coverage import CoverageError, camera_nodes, compute_coverage
 from .engine import Engine, Inbound
 from .live import EventHub, stream_events
-from .models import ClipRecord
+from .models import ClipRecord, Commit
 from .persistence import BatchWriter, Database, DbBatch
 from .state import create_state
 from .state.base import EVENT_ID_RE
@@ -50,11 +52,20 @@ from .volunteers import MAX_BODY_BYTES, MIN_CELL_COUNT, RATE_WINDOW_S, Volunteer
 log = logging.getLogger("skynet.app")
 
 NODE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+SIGNATURE_RE = re.compile(r"^[0-9a-f]{64}$")
 CLASSIFICATIONS = ("unknown", "ballistic", "hypersonic", "high_g", "stationary")
 ACTIVE_TRACK_NS = 30_000_000_000
 _INGEST_MAX_BYTES = MAX_BATCH_LINES * (MAX_DATAGRAM_BYTES + 2)
 _AUTH_BODY_MAX = 64 * 1024
 _HOUR_NS = 3600 * 1_000_000_000
+
+
+def http_signature(key: bytes, method: str, path: str, timestamp_ns: int, body_sha256: str) -> str:
+    """``skynet_common.protocol.sign_http_request`` taking the body's SHA-256
+    instead of the body, so a streamed upload can be verified without
+    holding it in memory (tests check the two agree)."""
+    msg = "\n".join([method.upper(), path, str(timestamp_ns), body_sha256]).encode()
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
 class ORJSON(Response):
@@ -104,12 +115,19 @@ class Runtime:
             if self.settings.mode == "standalone" and not self.settings.public_url:
                 log.warning("SKYNET_PUBLIC_URL is not set: clip upload URLs sent to UDP nodes will use %s",
                             self.engine.base_url())
+            # Everything allocated so far (modules, numpy, configuration) lives
+            # for the whole process; keeping it out of every full collection
+            # shortens the pauses that delay UDP processing.
+            gc.freeze()
             if self.settings.udp_enabled:
                 from .udp import UdpListener
 
                 s = self.settings
                 assert s.udp_port is not None
-                self.udp = UdpListener(self.engine, s.udp_host, s.udp_port, s.udp_rcvbuf, s.udp_batch)
+                # Several workers share the port; Linux spreads datagrams over
+                # them by source address, so each node sticks to one worker.
+                self.udp = UdpListener(self.engine, s.udp_host, s.udp_port, s.udp_rcvbuf, s.udp_batch,
+                                       reuse_port=s.workers > 1)
                 await self.udp.start()
             self._started = True
 
@@ -226,26 +244,35 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if scheme.lower() != "bearer" or not hmac.compare_digest(token.strip().encode(), settings.admin_token.encode()):
             raise HTTPException(401, "invalid admin token", headers={"WWW-Authenticate": "Bearer"})
 
-    async def node_auth(request: Request) -> Tuple[str, bytes]:
-        """Verify X-Skynet-* request signing (PROTOCOL.md); returns (node id, body)."""
+    def auth_headers(request: Request) -> Tuple[str, int, str]:
+        """Node id, timestamp and signature of a node-authenticated request."""
         node_id = request.headers.get("x-skynet-node", "")
         ts_raw = request.headers.get("x-skynet-timestamp", "")
         signature = request.headers.get("x-skynet-signature", "").lower()
-        if not NODE_ID_RE.match(node_id) or not ts_raw.isdigit() or len(signature) != 64:
+        if not NODE_ID_RE.match(node_id) or not ts_raw.isdigit() or not SIGNATURE_RE.match(signature):
             raise HTTPException(401, "missing or malformed X-Skynet-Node/-Timestamp/-Signature headers")
         if settings.master_key is None:
             raise HTTPException(503, "server has no master key configured")
         ts = int(ts_raw)
         if abs(time.time_ns() - ts) > settings.http_auth_window_ns:
             raise HTTPException(401, "request timestamp outside the allowed window")
-        body = await read_body(request, _AUTH_BODY_MAX)
-        key = engine.decoder.node_key(node_id)
-        if not verify_http_request(key, request.method, request.url.path, ts, body, signature):
+        return node_id, ts, signature
+
+    async def check_signature(request: Request, node_id: str, ts: int, signature: str, body_sha256: str) -> None:
+        expected = http_signature(engine.decoder.node_key(node_id), request.method, request.url.path, ts,
+                                  body_sha256)
+        if not hmac.compare_digest(expected, signature):
             raise HTTPException(401, "bad request signature")
         # A captured request must not be replayable inside the time window.
         ttl_ms = 2 * settings.http_auth_window_ns // 1_000_000
         if not (await state.claim(["h:" + signature], ttl_ms))[0]:
             raise HTTPException(401, "replayed request")
+
+    async def node_auth(request: Request) -> Tuple[str, bytes]:
+        """Verify X-Skynet-* request signing (PROTOCOL.md); returns (node id, body)."""
+        node_id, ts, signature = auth_headers(request)
+        body = await read_body(request, _AUTH_BODY_MAX)
+        await check_signature(request, node_id, ts, signature, hashlib.sha256(body).hexdigest())
         return node_id, body
 
     async def find_clip(request_id: str) -> ClipRecord:
@@ -286,6 +313,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         }
 
     async def stats_snapshot() -> Dict[str, Any]:
+        if rt.stats.shared:  # include what this process has not flushed yet
+            delta = rt.stats.drain()
+            if not delta.is_empty():
+                await state.commit(Commit(), settings.tracks.link_ttl_ms, delta)
         snap = await state.shared_stats() or rt.stats.snapshot()
         now = time.time_ns()
         snap["active_nodes"] = await state.count_active_nodes(now - settings.node_active_ns)
@@ -421,11 +452,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.websocket("/api/v1/live")
     async def live(ws: WebSocket) -> None:
         await rt.ensure_started()
-        await ws.accept()
+        subscription = None
         if state.name == "memory":
-            source = rt.hub.subscribe()
+            subscription = rt.hub.subscribe()
+            source: AsyncIterator[Dict[str, Any]] = subscription
         else:  # every instance's events are in the shared stream
-            source = stream_events(state, settings.live_poll_ms / 1000.0)
+            source = stream_events(state, settings.live_poll_ms / 1000.0, await state.last_event_id() or "0-0")
+        await ws.accept()
 
         async def pump() -> None:
             async for event in source:
@@ -442,6 +475,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            if subscription is not None:
+                subscription.close()
         if not done or tasks[0] in done:
             # Duration limit (Vercel) or a send failure: ask the client to reconnect.
             try:
@@ -455,7 +490,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def coverage(min_lat: float, min_lon: float, max_lat: float, max_lon: float, cell_km: float = 10.0,
                        ref_alt_m: float = 3000.0, min_elevation_deg: float = 10.0,
                        min_parallax_deg: float = 5.0) -> Dict[str, Any]:
-        nodes = camera_nodes(await state.list_nodes(), time.time_ns(), settings.node_active_ns)
+        nodes = camera_nodes(await state.list_nodes(), time.time_ns(), settings.node_active_ns,
+                             settings.public_location_decimals)
         try:
             # CPU-bound: keep the event loop (and the UDP back-signal path) free.
             return await asyncio.to_thread(compute_coverage, nodes, min_lat, min_lon, max_lat, max_lon, cell_km,
@@ -477,17 +513,27 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(503, str(exc)) from None
 
     @api.put("/clips/{request_id}/data")
-    async def upload_data(request_id: str, request: Request, expires: int, token: str) -> Dict[str, Any]:
+    async def upload_data(request_id: str, request: Request) -> Dict[str, Any]:
+        """Local clip storage. Node-authenticated like every node request; the
+        signature covers the body's SHA-256, so it is checked after the
+        upload has streamed to a temporary file and before the file is kept."""
         storage = rt.storage
         if not isinstance(storage, LocalStorage):
             raise HTTPException(404, "uploads go to object storage on this deployment")
-        if not storage.check_token(request_id, expires, token):
-            raise HTTPException(403, "invalid or expired upload token")
+        node_id, ts, signature = auth_headers(request)
         clip = await find_clip(request_id)
+        if clip.node_id != node_id:
+            raise HTTPException(403, "this clip was requested from another node")
         try:
-            size, digest = await storage.write(clip, request.stream())
+            size, digest, tmp = await storage.receive(clip, request.stream())
         except StorageError as exc:
             raise HTTPException(413, str(exc)) from None
+        try:
+            await check_signature(request, node_id, ts, signature, digest)
+        except HTTPException:
+            storage.discard(tmp)
+            raise
+        await storage.accept(tmp, clip)
         clip.bytes, clip.sha256 = size, digest
         await state.put_clip(clip)
         return {"bytes": size, "sha256": digest}

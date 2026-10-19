@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
     "skynet-common",
     "fastapi>=0.115",
+    "pydantic>=2.7",
     "uvicorn[standard]>=0.30",
     "numpy>=1.24",
     "orjson>=3.10",
@@ -26,9 +27,6 @@ skynet-server = "skynet_server.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["skynet_server*"]
-
-[tool.setuptools.package-data]
-skynet_server = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

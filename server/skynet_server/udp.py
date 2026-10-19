@@ -12,6 +12,10 @@ uvloop.
 
 Clip requests go back out through ``sendto`` on the same socket, so they
 leave from the port the node sent to and traverse its NAT mapping.
+
+Under overload the queue between the socket and the engine is bounded and
+sheds its oldest datagrams (counted as ``udp_dropped_overload``), so latency
+stays bounded instead of growing with the backlog.
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ _MIN_RCVBUF = 256 * 1024
 
 class UdpListener:
     def __init__(self, engine: Engine, host: str, port: int, rcvbuf: int = 8 * 1024 * 1024, batch_max: int = 64,
-                 queue_max: int = 200_000, reuse_port: bool = False):
+                 queue_max: int = 2048, reuse_port: bool = False):
         self.engine = engine
         self.host = host
         self.port = port
@@ -110,8 +114,11 @@ class UdpListener:
                 stats.count("udp_recv_errors")
                 continue
             if len(queue) >= self.queue_max:
+                # Overloaded: shed the oldest datagram. Stale observations are
+                # the least useful for matching, and a bounded queue keeps
+                # the back-signal latency of what is processed bounded.
+                queue.popleft()
                 stats.count("udp_dropped_overload")
-                continue
             queue.append(Inbound(data, time.time_ns(), time.perf_counter_ns(), addr))
         if queue:
             self._wake.set()
