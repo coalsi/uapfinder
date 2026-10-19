@@ -232,6 +232,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def require_admin(request: Request) -> None:
         if not settings.admin_token:
             raise HTTPException(503, "admin API disabled (set SKYNET_ADMIN_TOKEN)")
+        # tailscaled marks every request that arrived through Tailscale Funnel
+        # (the public internet) and strips the header from client input, so the
+        # admin API stays reachable only from the tailnet or the host itself.
+        if request.headers.get("tailscale-funnel-request"):
+            raise HTTPException(403, "admin API is not available through Tailscale Funnel; use the tailnet address")
         scheme, _, token = request.headers.get("authorization", "").partition(" ")
         if scheme.lower() != "bearer" or not hmac.compare_digest(token.strip().encode(), settings.admin_token.encode()):
             raise HTTPException(401, "invalid admin token", headers={"WWW-Authenticate": "Bearer"})

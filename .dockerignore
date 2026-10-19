@@ -1,0 +1,17 @@
+**/.venv
+**/node_modules
+**/__pycache__
+**/*.egg-info
+**/.pytest_cache
+**/build
+**/dist
+**/screenshots
+**/test-results
+**/.env
+.git
+data
+dashboard
+site
+edge
+docs
+tools

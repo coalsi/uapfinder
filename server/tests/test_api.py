@@ -102,6 +102,15 @@ def test_node_registration_requires_admin(client: TestClient):
     assert nodes["roof-1"]["label"] == "Roof" and nodes["roof-1"]["online"] is False
 
 
+def test_admin_api_refused_through_tailscale_funnel(client: TestClient):
+    # tailscaled adds this header to every request that came in from the public internet.
+    funnel = {**ADMIN, "Tailscale-Funnel-Request": "?1"}
+    assert client.post("/api/v1/nodes", json={}, headers=funnel).status_code == 403
+    assert client.get("/api/v1/volunteers", headers=funnel).status_code == 403
+    # Public endpoints are unaffected.
+    assert client.get("/api/v1/health", headers={"Tailscale-Funnel-Request": "?1"}).status_code == 200
+
+
 def test_ingest_rejections_rounding_and_commands_once(client: TestClient):
     net = network()
     good = sightings(net)

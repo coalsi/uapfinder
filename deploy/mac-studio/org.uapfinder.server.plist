@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchDaemon for the UAP Finder server on macOS. Replace __USER__ with the
+  account that owns the checkout and __REPO__ with its absolute path (see
+  deploy/mac-studio/README.md), install to /Library/LaunchDaemons owned by
+  root:wheel, mode 644.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>org.uapfinder.server</string>
+
+  <!-- Run as your user, not root: the database connects over your user's
+       local socket and the clips directory belongs to you. -->
+  <key>UserName</key>
+  <string>__USER__</string>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/server/.venv/bin/skynet-server</string>
+    <string>--env-file</string>
+    <string>__REPO__/server/.env</string>
+    <string>serve</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Homebrew's PostgreSQL socket is in /tmp; nothing else is needed,
+         but a PATH keeps child tools (e.g. ffmpeg) findable. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- Restart whenever it exits, but not more than once every 10 s. -->
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <!-- Latency-sensitive: don't let macOS throttle it as background work. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <key>StandardOutPath</key>
+  <string>__REPO__/data/logs/server.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/data/logs/server.log</string>
+</dict>
+</plist>

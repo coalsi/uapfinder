@@ -1,0 +1,50 @@
+# Self-hosted UAP Finder server for a Linux VPS: the standalone server
+# (HTTP API on 8000, UDP ingest on 9999) and PostgreSQL/PostGIS.
+#
+#   cp server/.env.example server/.env      # set SKYNET_MASTER_KEY, SKYNET_ADMIN_TOKEN,
+#                                           # SKYNET_PUBLIC_URL, SKYNET_CORS_ORIGINS
+#   echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
+#   docker compose up -d --build
+#
+# The single server process keeps matching state in memory, so Redis is not
+# needed. Put HTTPS in front of port 8000 (e.g. Caddy) for public access; UDP
+# 9999 is for edge nodes. The official PostGIS images are amd64-only; on an
+# ARM host set POSTGIS_IMAGE to a multi-arch build (see deploy/mac-studio/README.md).
+services:
+  db:
+    image: ${POSTGIS_IMAGE:-postgis/postgis:17-3.5}
+    environment:
+      POSTGRES_DB: uapfinder
+      POSTGRES_USER: uapfinder
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uapfinder -d uapfinder"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  server:
+    build:
+      context: .
+      dockerfile: deploy/docker/server.Dockerfile
+    env_file: server/.env
+    environment:
+      SKYNET_DATABASE_URL: postgresql://uapfinder:${POSTGRES_PASSWORD}@db:5432/uapfinder
+      SKYNET_HTTP_HOST: 0.0.0.0
+    command: ["sh", "-c", "skynet-server migrate && exec skynet-server serve"]
+    ports:
+      - "8000:8000"
+      - "9999:9999/udp"
+    volumes:
+      - clips:/var/lib/uapfinder/clips
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db:
+  clips:

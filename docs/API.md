@@ -13,7 +13,7 @@ Base path: `/api/v1`. CORS is enabled for the origins in
 
 | Caller | How |
 |--------|-----|
-| Admin (node provisioning) | `Authorization: Bearer <SKYNET_ADMIN_TOKEN>` |
+| Admin (node provisioning) | `Authorization: Bearer <SKYNET_ADMIN_TOKEN>`. Refused with `403` for requests that arrive through Tailscale Funnel (tailscaled marks them with `Tailscale-Funnel-Request`), so on a Funnel deployment admin calls must come from the tailnet or the host. |
 | Edge node (HTTP) | `X-Skynet-Node`, `X-Skynet-Timestamp`, `X-Skynet-Signature` headers, see [PROTOCOL.md](PROTOCOL.md#signing) |
 | Edge node (ingest) | each NDJSON line is individually signed; no request auth |
 | Dashboard / public | none (read-only). Node positions in public responses are rounded to `SKYNET_PUBLIC_LOCATION_DECIMALS` decimal places (default 2, about 1 km) to protect volunteer households. |
@@ -89,7 +89,7 @@ that fired.
 ## Endpoints
 
 ### `GET /api/v1/health`
-`{"status": "ok", "version": "0.1.0", "mode": "standalone" | "vercel", "state_backend": "memory" | "redis", "db": "ok" | "disabled" | "error", "udp_port": 9999 | null, "time_ns": …}`
+`{"status": "ok", "version": "0.1.0", "mode": "standalone" | "vercel", "state_backend": "memory" | "redis", "state": "ok" | "error", "db": "ok" | "disabled" | "error", "udp_port": 9999 | null, "time_ns": …}`
 
 ### `GET /api/v1/stats`
 ```json
@@ -105,7 +105,10 @@ that fired.
 ```
 Latencies are measured inside the server from message receipt to completion
 of processing, and to the hand-off of the `clip_request` datagram (UDP) or
-its enqueueing (HTTPS). The rates are averaged over the last 10 s.
+its enqueueing (HTTPS); the percentiles cover the last 30 s. The rates are
+averaged over the last 10 s. A `counters` object with the raw counters
+(searches, matches, tracks created, clip requests by transport, …) is
+included for operators.
 
 ### `POST /api/v1/nodes` (admin)
 Request: `{"label": "optional", "node_id": "optional custom id"}`
@@ -126,10 +129,13 @@ Response `200`:
 ```json
 {"accepted": 37, "rejected": [{"line": 4, "reason": "stale"}], "commands": ["{\"type\":\"clip_request\",…,\"sig\":\"…\"}"]}
 ```
-`commands` holds pending server-to-node messages, as raw signed JSON
-strings so the node can verify the signature over the exact bytes. Only
-commands for node_ids that appear in validly signed lines of this request
-are returned, and each command is returned once.
+`rejected[].line` is 1-based and counts blank lines. `commands` holds
+pending server-to-node messages, as raw signed JSON strings so the node can
+verify the signature over the exact bytes. Only commands for node_ids that
+appear in validly signed lines of this request are returned, and each
+command is returned once. A node that reports over HTTPS gets its clip
+requests here even if it sent UDP shortly before: the transport of a node's
+most recent message decides how its clip requests are delivered.
 
 ### `GET /api/v1/nodes/{node_id}/commands` (node auth)
 `{"commands": ["…signed clip_request…"]}`; same once-only semantics.
@@ -190,7 +196,18 @@ steer rural deployment.
 ### Clip upload (node auth)
 
 1. `POST /api/v1/clips/{request_id}/upload-target` → `{"method": "PUT", "url": "…", "headers": {"Content-Type": "video/mp4"}}`
-2. Upload the file with that method, URL and headers.
+2. Upload the file with that method, URL and headers. Two kinds of target:
+   * **Server storage** (self-hosted): `PUT {SKYNET_PUBLIC_URL}/api/v1/clips/{request_id}/data`.
+     The node adds its own node-auth headers (they are not in the returned
+     `headers`), signed over `PUT`, the path, the timestamp and the body's
+     SHA-256 (±60 s window, replays refused). The server streams the body to
+     disk and checks the signature against its digest before keeping it.
+     Responses: `200 {"bytes", "sha256"}`, `401` bad or missing auth, `403`
+     the clip belongs to another node, `413` too large, `404` when the
+     deployment stores clips in S3. The URL never points at a loopback or
+     `0.0.0.0` host; set `SKYNET_PUBLIC_URL` to the address nodes can reach.
+   * **Presigned object storage** (S3, R2, Backblaze; required on Vercel):
+     upload exactly as returned, with no node headers.
 3. `POST /api/v1/clips/{request_id}/complete` with
    `{"bytes": 1234567, "sha256": "…", "content_type": "video/mp4", "t_start_ns": …, "t_end_ns": …, "frames": 600}` → `{"status": "uploaded"}`
 
@@ -249,5 +266,6 @@ volunteers are omitted so individuals cannot be located.
 
 `DELETE /api/v1/volunteers/{id}` (admin) → `204`, for removal requests.
 
-### `GET /metrics`
-Prometheus text exposition of the counters behind `/stats` (standalone mode).
+### `GET /metrics` (alias `GET /api/v1/metrics`)
+Prometheus text exposition of the counters behind `/stats`. The alias is
+reachable on Vercel, where only `/api/*` is routed to the function.
