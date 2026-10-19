@@ -16,7 +16,7 @@ after it connected.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncIterator, Dict, List, Optional, Set
+from typing import Any, AsyncIterator, Dict, List, Set
 
 from .state.base import StateBackend
 

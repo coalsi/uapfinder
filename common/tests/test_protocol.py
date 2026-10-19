@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pytest
@@ -152,3 +153,5 @@ def test_http_request_signature():
     sig = p.sign_http_request(key, "post", "/api/v1/clips/r1/upload-target", 1782345600000000000, b"{}")
     assert p.verify_http_request(key, "POST", "/api/v1/clips/r1/upload-target", 1782345600000000000, b"{}", sig)
     assert not p.verify_http_request(key, "POST", "/api/v1/clips/r2/upload-target", 1782345600000000000, b"{}", sig)
+    digest = hashlib.sha256(b"{}").hexdigest()
+    assert p.sign_http_digest(key, "post", "/api/v1/clips/r1/upload-target", 1782345600000000000, digest) == sig

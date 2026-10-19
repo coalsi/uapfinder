@@ -35,6 +35,7 @@ and [docs/API.md](../docs/API.md); the geometry and error model in
 | `volunteers.py` | "Host a node" sign-up validation and CSV export |
 | `sim.py` | synthetic network used by tests |
 | `bench/bench_ingest.py` | UDP ingest benchmark |
+| `bench/bench_inprocess.py` | single-process matching capacity, no network |
 
 ## Run standalone (Linux or macOS)
 
@@ -140,6 +141,13 @@ all of them with defaults. The essentials:
   quadratic (a 1 s fit cannot resolve 10 g at tens of metres of point noise),
   ballistic/stationary from a 30 s decimated history; flags use 3-3.5 sigma
   bounds because a track is refitted twice a second.
+* **Volunteer privacy**: public outputs (Node objects, triangulation rays in
+  `/events` and `WS /live`) carry node positions rounded to
+  `SKYNET_PUBLIC_LOCATION_DECIMALS` (default 2, ~1 km) and heights rounded to
+  10 m; published ray az/el are recomputed from that rounded position to the
+  published point (the measured lines of sight, which back-projected would
+  locate a camera to metres, are kept only in the database); coverage maps are
+  computed from the rounded positions too. Track points carry node ids only.
 * **Overload**: the UDP queue is bounded (2048 datagrams) and sheds the
   oldest (`udp_dropped_overload` in `/stats`), so latency stays bounded.
 * `/stats` latency percentiles cover the last 30 s (Redis: the last 4096
@@ -192,7 +200,35 @@ benchmark's senders and, for Redis, redis-server share those cores). The
 scenario is deliberately dense: 200 nodes in four clusters, objects seen by
 2-20 nodes (median ~6), about 40% of all packets complete a triangulation.
 
-BENCHMARK_TABLE
+30 s measured after an 8 s warm-up. Back-signal latency is server-side
+(datagram received to clip request sent) and end-to-end at the nodes (packet
+that completed the match sent to clip request received); shed is telemetry
+the server never processed; CPU is the server's (redis-server excluded).
+
+| State, processes | offered msg/s | processed msg/s | shed | back-signal p50 / p99 ms | end-to-end p50 / p99 ms | CPU cores |
+|---|---|---|---|---|---|---|
+| memory, 1 | 3,105 | 3,105 | 0 % | 1.2 / 19 | 1.6 / 28 | 0.72 |
+| memory, 1 | 4,068 | 4,068 | 0 % | 1.9 / 95 | 2.6 / 108 | 0.82 |
+| memory, 1 | 6,069 | 5,978 | 1.5 % | 52 / 321 | 57 / 326 | 0.97 |
+| memory, 1 | 10,191 | 6,313 | 38 % | 203 / 244 | 209 / 267 | 0.99 |
+| redis, 1 | 10,191 | 3,104 | 70 % | 217 / 484 | 221 / 382 | 0.91 |
+| redis, 3 workers | 6,069 | 6,087 | 0 % | 23 / 139 | 25 / 153 | 2.43 |
+| redis, 3 workers | 10,191 | 8,260 | 19 % | 525 / 700 | 534 / 704 | 2.48 |
+
+**The 10k msg/s target is not met on this hardware.** One memory-backend
+process saturates at about 6k msg/s and keeps the back-signal p99 under
+20 ms up to about 3k msg/s; three Redis workers absorb 6k msg/s without loss
+and top out near 8.3k.
+
+`bench/bench_inprocess.py` measures one process's matching capacity with no
+network or sender processes competing for the CPU: about **7,900 msg/s
+(127 µs per message)** on one 2.1 GHz Xeon core of this container. Run it on
+the host you plan to use (for example the Mac Studio) to see whether a
+single process reaches 10k msg/s there:
+
+```bash
+server/.venv/bin/python server/bench/bench_inprocess.py
+```
 
 * One process is CPU-bound in Python, mostly in matching. Within capacity
   the median back-signal (receipt to `sendto`) is a few milliseconds; the

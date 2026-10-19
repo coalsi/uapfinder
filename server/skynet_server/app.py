@@ -34,7 +34,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from skynet_common.protocol import MAX_BATCH_LINES, MAX_DATAGRAM_BYTES
+from skynet_common.protocol import MAX_BATCH_LINES, MAX_DATAGRAM_BYTES, sign_http_digest
 
 from . import __version__
 from .config import Settings
@@ -58,14 +58,6 @@ ACTIVE_TRACK_NS = 30_000_000_000
 _INGEST_MAX_BYTES = MAX_BATCH_LINES * (MAX_DATAGRAM_BYTES + 2)
 _AUTH_BODY_MAX = 64 * 1024
 _HOUR_NS = 3600 * 1_000_000_000
-
-
-def http_signature(key: bytes, method: str, path: str, timestamp_ns: int, body_sha256: str) -> str:
-    """``skynet_common.protocol.sign_http_request`` taking the body's SHA-256
-    instead of the body, so a streamed upload can be verified without
-    holding it in memory (tests check the two agree)."""
-    msg = "\n".join([method.upper(), path, str(timestamp_ns), body_sha256]).encode()
-    return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
 class ORJSON(Response):
@@ -259,7 +251,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return node_id, ts, signature
 
     async def check_signature(request: Request, node_id: str, ts: int, signature: str, body_sha256: str) -> None:
-        expected = http_signature(engine.decoder.node_key(node_id), request.method, request.url.path, ts,
+        expected = sign_http_digest(engine.decoder.node_key(node_id), request.method, request.url.path, ts,
                                   body_sha256)
         if not hmac.compare_digest(expected, signature):
             raise HTTPException(401, "bad request signature")
@@ -472,11 +464,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         try:
             done, _ = await asyncio.wait(tasks, timeout=settings.ws_max_s, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
             if subscription is not None:
                 subscription.close()
+            for task in tasks:
+                task.cancel()
+            # asyncio.wait rather than gather: if this handler is itself being
+            # cancelled meanwhile, gather would re-raise the child's
+            # CancelledError and drop the canceller's message, which anyio
+            # cancel scopes (e.g. the TestClient's) use to recognise their own.
+            await asyncio.wait(tasks)
+            for task in tasks:
+                if not task.cancelled():
+                    task.exception()  # retrieved: a failed send just ends the session
         if not done or tasks[0] in done:
             # Duration limit (Vercel) or a send failure: ask the client to reconnect.
             try:

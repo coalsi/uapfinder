@@ -109,9 +109,13 @@ def verify_signature(data: bytes, key: bytes) -> bool:
 
 def sign_http_request(key: bytes, method: str, path: str, timestamp_ns: int, body: bytes = b"") -> str:
     """Signature for node-authenticated HTTP requests (X-Skynet-Signature header)."""
-    msg = b"\n".join(
-        [method.upper().encode(), path.encode(), str(timestamp_ns).encode(), hashlib.sha256(body).hexdigest().encode()]
-    )
+    return sign_http_digest(key, method, path, timestamp_ns, hashlib.sha256(body).hexdigest())
+
+
+def sign_http_digest(key: bytes, method: str, path: str, timestamp_ns: int, body_sha256_hex: str) -> str:
+    """``sign_http_request`` from the body's SHA-256 hex digest, so a streamed
+    upload can be verified without holding the whole body in memory."""
+    msg = "\n".join([method.upper(), path, str(timestamp_ns), body_sha256_hex]).encode()
     return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 

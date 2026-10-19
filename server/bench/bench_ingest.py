@@ -44,7 +44,6 @@ import selectors
 import shutil
 import signal
 import socket
-import statistics
 import subprocess
 import sys
 import tempfile
@@ -60,7 +59,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "server"), str(ROOT / "common")]
 
 from skynet_common.camera import camera_basis_enu  # noqa: E402
-from skynet_common.geodesy import WGS84_A, WGS84_E2, enu_basis, geodetic_to_ecef  # noqa: E402
+from skynet_common.geodesy import enu_basis, geodetic_to_ecef  # noqa: E402
 from skynet_common.protocol import derive_node_key, encode_signed  # noqa: E402
 
 CLUSTERS = [(33.45, -112.07), (35.20, -111.65), (32.25, -110.95), (34.55, -112.47)]
@@ -78,7 +77,7 @@ OBJECT_LIFE_S = 12.0
 
 
 class Scenario:
-    def __init__(self, rate: float, seed: int, duration: float):
+    def __init__(self, rate: float, seed: int, window: Tuple[float, float]):
         rng = random.Random(seed)
         nodes = []
         for ci, (clat, clon) in enumerate(CLUSTERS):
@@ -99,12 +98,13 @@ class Scenario:
         # Objects live for OBJECT_LIFE_S with births spread over the run, so
         # tracks (and their clip requests) are created all the time rather
         # than in one cold-start burst. Objects are added until the network
-        # reports about rate/HZ messages per frame on average.
+        # reports about rate/HZ messages per frame on average over the
+        # measured window (scenario seconds; the warm-up comes before it).
         self.obj_origin: List[np.ndarray] = []
         self.obj_vel: List[np.ndarray] = []
         self.obj_birth: List[float] = []
         target = rate / HZ
-        probes = [duration * i / 4 for i in range(4)]
+        probes = [window[0] + (window[1] - window[0]) * i / 8 for i in range(8)]
         while True:
             ci = rng.randrange(len(CLUSTERS))
             clat, clon = CLUSTERS[ci]
@@ -114,7 +114,7 @@ class Scenario:
             speed, heading = rng.choice([30.0, 150.0, 250.0, 900.0, 2200.0]), rng.uniform(0, 2 * math.pi)
             e, n, u = enu_basis(lat, lon)
             v = speed * (math.sin(heading) * np.array(e) + math.cos(heading) * np.array(n))
-            birth = rng.uniform(-OBJECT_LIFE_S, duration)
+            birth = rng.uniform(-OBJECT_LIFE_S, window[1])
             # Positions are given relative to mid-life, so the object crosses
             # the cluster's sky while it is alive.
             self.obj_origin.append(np.array(geodetic_to_ecef(lat, lon, rng.uniform(2000.0, 18000.0)))
@@ -306,8 +306,9 @@ def main() -> int:
     args = ap.parse_args()
 
     t = time.time()
-    sc = Scenario(args.rate, args.seed, args.duration)
-    per_frame = round(np.mean([sc.visible(args.duration * i / 8)[0].sum() for i in range(8)]))
+    sc = Scenario(args.rate, args.seed, (args.warmup, args.warmup + args.duration))
+    per_frame = round(np.mean([sc.visible(args.warmup + args.duration * (i + 0.5) / 16)[0].sum()
+                               for i in range(16)]))
     print(f"scenario: {len(sc.node_ids)} nodes, {sc.objects} objects, {per_frame} reports per frame "
           f"({per_frame * HZ} msg/s offered) [{time.time() - t:.1f}s]", flush=True)
 

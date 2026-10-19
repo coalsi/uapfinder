@@ -185,3 +185,11 @@ async def test_public_rays_are_recomputed_from_rounded_positions(engine: Engine)
         assert (ray["az_deg"], ray["el_deg"]) == (round(az, 4), round(el, 4))
         measured_az, measured_el, _ = look_angles(node.lat, node.lon, node.alt_m, *TARGET)
         assert abs(ray["az_deg"] - measured_az) + abs(ray["el_deg"] - measured_el) > 0.01
+    # Parallax and sigma, precise functions of the camera positions, come from the rounded ones too.
+    from skynet_common.geodesy import angle_between_deg, geodetic_to_ecef, sub
+
+    p = geodetic_to_ecef(tri["lat"], tri["lon"], tri["alt_m"])
+    a, b = (sub(p, geodetic_to_ecef(r["node_lat"], r["node_lon"], r["node_alt_m"])) for r in tri["rays"])
+    assert tri["parallax_deg"] == round(angle_between_deg(a, b), 3)
+    track = (await engine.state.list_tracks(0, 10, None))[0]
+    assert track.last_point["sigma_m"] == tri["sigma_m"]

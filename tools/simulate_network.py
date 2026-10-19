@@ -235,7 +235,7 @@ def heartbeat(node: SimNode, now_ns: int) -> dict:
     }
 
 
-def telemetry(node: SimNode, target_idx: int, t_ns: int, az: float, el: float, ang_vel: float) -> dict:
+def telemetry(node: SimNode, track_id: str, t_ns: int, az: float, el: float, ang_vel: float) -> dict:
     return {
         "type": "telemetry",
         "node_id": node.node_id,
@@ -245,7 +245,7 @@ def telemetry(node: SimNode, target_idx: int, t_ns: int, az: float, el: float, a
         "vector_target": {"azimuth_deg": round(az % 360.0, 6), "elevation_deg": round(el, 6)},
         "pixel_metrics": {"angular_velocity_deg_s": round(ang_vel, 4), "relative_intensity": 0.8},
         "seq": node.next_seq(),
-        "track_id": f"t{target_idx}",
+        "track_id": track_id,
         "anomaly_score": 0.5,
     }
 
@@ -274,6 +274,9 @@ def run(args: argparse.Namespace) -> int:
     else:
         transport = HttpsTransport(args.https, nodes)
 
+    # Like real nodes, local track ids are unique per run, so a new run is
+    # never linked to a previous run's 3D tracks on a long-lived server.
+    run_id = format(int(time.time()), "x")
     truth: Dict[str, List[Tuple[int, Vec3]]] = {t.name: [] for t in targets}
     prev_dir: Dict[Tuple[str, int], Tuple[float, Vec3]] = {}
     sent = 0
@@ -311,7 +314,7 @@ def run(args: argparse.Namespace) -> int:
                         pt, pd = prev_dir[key]
                         ang_vel = g.angle_between_deg(pd, d) / max(t_sim - pt, 1e-3)
                     prev_dir[key] = (t_sim, d)
-                    pkt = telemetry(node, ti, now_ns + jitter_ns, az_n, el_n, ang_vel)
+                    pkt = telemetry(node, f"{run_id}-t{ti}", now_ns + jitter_ns, az_n, el_n, ang_vel)
                     transport.send(node, encode_signed(pkt, node.key))
                     sent += 1
             transport.flush()

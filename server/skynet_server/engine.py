@@ -30,14 +30,16 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence, Set, Tuple
 from urllib.parse import urlsplit
 
 from skynet_common.camera import camera_basis_enu
-from skynet_common.geodesy import azel_to_ecef_unit, enu_to_ecef_vector, geodetic_to_ecef, haversine_m, look_angles
+from skynet_common.geodesy import (angle_between_deg, azel_to_ecef_unit, ecef_to_enu_vector, enu_to_azel,
+                                   enu_to_ecef_vector, geodetic_to_ecef, haversine_m)
 from skynet_common.protocol import Heartbeat, ProtocolError, Telemetry, encode_signed
 
 from .config import Settings
 from .decode import Decoder, Message
+from .fastmath import position_sigma_m
 from .live import EventHub
 from .matchmaker import Cones, Matchmaker, Plan
-from .models import (ClipRecord, Commit, Detection, Match, NodeRecord, NodeUpdate, RayObs, TrackState, public_position,
+from .models import (ClipRecord, Commit, Detection, Match, NodeRecord, NodeUpdate, TrackState, public_position,
                      track_point)
 from .persistence import BatchWriter, Database, DbBatch
 from .state.base import Admission, StateBackend, UdpAddr
@@ -49,20 +51,43 @@ log = logging.getLogger("skynet.engine")
 PAIR_PREFIX = "p:"
 
 
-def public_ray(r: RayObs, lat: float, lon: float, alt_m: float, decimals: int) -> Dict[str, Any]:
-    """A ray as published: from the rounded node position to the published
-    point. The measured line of sight is never published, since a few of
-    them back-projected through their 3D points would locate the camera to
-    within metres despite the rounding (it is kept in the database only)."""
-    node_lat, node_lon, node_alt = public_position(r.lat, r.lon, r.alt_m, decimals)
-    az, el, _ = look_angles(node_lat, node_lon, node_alt, lat, lon, alt_m)
-    return {"node_id": r.node_id, "az_deg": round(az, 4), "el_deg": round(el, 4), "node_lat": node_lat,
-            "node_lon": node_lon, "node_alt_m": node_alt}
+def public_geometry(m: Match, decimals: int, sigma_deg: float
+                    ) -> Tuple[Tuple[float, float, float], List[Dict[str, Any]], float, float]:
+    """What may be published about a triangulation: (point, rays, sigma_m,
+    parallax_deg), with every ray going from the rounded node position to the
+    published point.
+
+    The measured lines of sight are never published: a few of them
+    back-projected through their 3D points would locate the cameras to within
+    metres despite the rounding. For the same reason the published sigma and
+    parallax, precise functions of the camera positions, are recomputed from
+    the rounded positions. The measured values stay in the database.
+    """
+    lat, lon, alt = round(m.lat, 7), round(m.lon, 7), round(m.alt_m, 2)
+    point = geodetic_to_ecef(lat, lon, alt)
+    rays: List[Dict[str, Any]] = []
+    units: List[Tuple[float, float, float]] = []
+    ranges: List[float] = []
+    for r in m.rays:
+        node_lat, node_lon, node_alt = public_position(r.lat, r.lon, r.alt_m, decimals)
+        o = geodetic_to_ecef(node_lat, node_lon, node_alt)
+        d = (point[0] - o[0], point[1] - o[1], point[2] - o[2])
+        az, el = enu_to_azel(*ecef_to_enu_vector(node_lat, node_lon, d))  # = look_angles(node -> point)
+        rng = math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
+        units.append((d[0] / rng, d[1] / rng, d[2] / rng))
+        ranges.append(rng)
+        rays.append({"node_id": r.node_id, "az_deg": round(az, 4), "el_deg": round(el, 4), "node_lat": node_lat,
+                     "node_lon": node_lon, "node_alt_m": node_alt})
+    widest = min(((a, b) for i, a in enumerate(units) for b in units[i + 1:]),
+                 key=lambda ab: ab[0][0] * ab[1][0] + ab[0][1] * ab[1][1] + ab[0][2] * ab[1][2])
+    return (lat, lon, alt), rays, position_sigma_m(units, ranges, sigma_deg), angle_between_deg(*widest)
 
 
 def is_local_host(host: Optional[str]) -> bool:
     """Loopback, unspecified or empty host names, which a remote node cannot use."""
     return not host or host in ("localhost", "0.0.0.0", "::", "::1") or host.startswith("127.")
+
+
 _UDP_SHARE_REFRESH_NS = 20_000_000_000
 # Attitude and GPS errors: the view cone used for pruning is this much wider.
 _CONE_MARGIN_DEG = 3.0
@@ -215,6 +240,19 @@ class Engine:
                 self._udp_shared[node_id] = (addr, now_ns)
                 commit.udp_addrs[node_id] = (addr, now_ns)
 
+    def _note_https(self, node_id: str, commit: Commit) -> None:
+        """A node reporting over HTTPS gets its clip requests through the
+        command queue, even if it sent UDP within the active window: it has
+        switched transports, and its old UDP address may no longer reach it."""
+        self._udp_book.pop(node_id, None)
+        if self.shared_state:
+            shared = self._udp_shared.get(node_id)
+            if shared is None or shared[1] != 0:
+                # A tombstone (seen = 0) is never fresh, so other workers stop
+                # using the shared address too.
+                self._udp_shared[node_id] = (("", 0), 0)
+                commit.udp_addrs[node_id] = (("", 0), 0)
+
     # --- the pipeline ----------------------------------------------------------
 
     async def process(self, items: Sequence[Inbound], request_base: Optional[str] = None) -> BatchOutcome:
@@ -238,6 +276,9 @@ class Engine:
 
         commit = Commit()
         db = DbBatch()
+        for p in pending:
+            if items[p.index].addr is None:
+                self._note_https(p.msg.node_id, commit)
         outgoing: List[Tuple[ClipRecord, bytes, int]] = []
         if pending:
             outgoing = await self._ingest(items, pending, out, commit, db, now_ns, request_base)
@@ -392,6 +433,7 @@ class Engine:
             tracks = await self.state.get_tracks(sorted(set(links.values())))
         updates = self.tracks.assign(matches, links, tracks, now_ns)
         decimals = self.settings.public_location_decimals
+        gate_sigma = self.settings.match.gate.angular_sigma_deg
         base: Optional[str] = None
         outgoing: List[Tuple[ClipRecord, bytes, int]] = []
         track_events: Dict[str, TrackState] = {}
@@ -421,7 +463,7 @@ class Engine:
                 continue
             self.matchmaker.note_recorded(m)
             node_ids = [r.node_id for r in m.rays]
-            lat, lon, alt = round(m.lat, 7), round(m.lon, 7), round(m.alt_m, 2)
+            (lat, lon, alt), rays, sigma, parallax = public_geometry(m, decimals, gate_sigma)
             data = {
                 "event_id": event_id,
                 "track_id": track.track_id,
@@ -429,22 +471,26 @@ class Engine:
                 "lat": lat,
                 "lon": lon,
                 "alt_m": alt,
-                "sigma_m": round(m.sigma_m, 2),
+                "sigma_m": round(sigma, 2),
                 "error_margin_m": round(m.error_margin_m, 2),
-                "parallax_deg": round(m.parallax_deg, 3),
-                "rays": [public_ray(r, lat, lon, alt, decimals) for r in m.rays],
+                "parallax_deg": round(parallax, 3),
+                "rays": rays,
             }
             commit.events.append({"type": "triangulation", "t_ns": m.t_ns, "data": data})
-            commit.new_points.setdefault(track.track_id, []).append(
-                track_point(m.t_ns, m.lat, m.lon, m.alt_m, m.sigma_m, m.error_margin_m, node_ids))
+            point = track_point(m.t_ns, m.lat, m.lon, m.alt_m, sigma, m.error_margin_m, node_ids)
+            commit.new_points.setdefault(track.track_id, []).append(point)
+            if track.last_point is not None and track.last_point["t_ns"] == m.t_ns:
+                track.last_point = point  # the public sigma, not the internal one
             if self.db is not None:
                 db.triangulations.append({
                     **data,
                     "node_ids": node_ids,
-                    # Full-precision rays for the durable record.
-                    "rays": [{"node_id": r.node_id, "seq": r.seq, "track_id": r.track_id, "az_deg": r.azel()[0],
-                              "el_deg": r.azel()[1], "lat": r.lat, "lon": r.lon, "alt_m": r.alt_m,
-                              "interpolated": r.interpolated} for r in m.rays],
+                    # The measured rays and solution quality, for the durable
+                    # record only (never returned by the API).
+                    "rays": {"measured_sigma_m": m.sigma_m, "measured_parallax_deg": m.parallax_deg, "rays": [
+                        {"node_id": r.node_id, "seq": r.seq, "track_id": r.track_id, "az_deg": r.azel()[0],
+                         "el_deg": r.azel()[1], "lat": r.lat, "lon": r.lon, "alt_m": r.alt_m,
+                         "interpolated": r.interpolated} for r in m.rays]},
                 })
         for track in track_events.values():
             commit.events.append({"type": "track", "t_ns": track.last_ns, "data": track.public()})
