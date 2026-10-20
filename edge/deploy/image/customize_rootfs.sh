@@ -64,6 +64,8 @@ if [[ $TEST == 0 ]]; then
     [[ -f "$ROOTFS/etc/nv_tegra_release" ]] || die "$ROOTFS/etc/nv_tegra_release missing: run apply_binaries.sh first"
     compgen -G "$ROOTFS/etc/apt/sources.list.d/nvidia-l4t-apt-source.list" >/dev/null \
         || die "NVIDIA apt source missing in $ROOTFS: run apply_binaries.sh first"
+    ! grep -q '<SOC>' "$ROOTFS/etc/apt/sources.list.d/nvidia-l4t-apt-source.list" \
+        || die "NVIDIA apt source still has the <SOC> placeholder (build-image.sh's binaries step sets t234)"
 fi
 INSTALL_NODE_REL="${UAPF_INSTALL_NODE:-edge/deploy/install-node.sh}"
 [[ -f "$REPO/$INSTALL_NODE_REL" ]] \

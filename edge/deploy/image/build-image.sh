@@ -230,6 +230,12 @@ step_rootfs() {
 step_binaries() {
     (cd "$L4T" && ./apply_binaries.sh)
     [[ -f "$ROOTFS/etc/nv_tegra_release" ]] || die "apply_binaries.sh did not write etc/nv_tegra_release"
+    # NVIDIA's apt source names the SoC repository "<SOC>"; NVIDIA's flashing
+    # tools fill it in, an SD card image built this way has to (Orin = t234).
+    local apt_src="$ROOTFS/etc/apt/sources.list.d/nvidia-l4t-apt-source.list"
+    [[ -f "$apt_src" ]] || die "apply_binaries.sh did not install $apt_src"
+    sed -i "s/<SOC>/t234/g" "$apt_src"
+    log "NVIDIA apt source: $(grep -v '^#' "$apt_src" | tr '\n' ' ')"
     log "rootfs: $(head -n1 "$ROOTFS/etc/nv_tegra_release")"
     grep -q "R${L4T_VERSION%%.*} (release), REVISION: ${L4T_VERSION#*.}" "$ROOTFS/etc/nv_tegra_release" \
         || warn "etc/nv_tegra_release does not say R${L4T_VERSION%%.*} REVISION ${L4T_VERSION#*.}"
@@ -246,7 +252,9 @@ step_user() {
     # A throw-away password: customize_rootfs.sh locks the account; the setup page sets the real one.
     local pw
     pw="$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"
-    (cd "$L4T" && ./tools/l4t_create_default_user.sh -u "$DEFAULT_USER" -p "$pw" -n "$DEFAULT_HOSTNAME" --accept-license)
+    # The script echoes the password; keep it out of the (public) build log.
+    (cd "$L4T" && ./tools/l4t_create_default_user.sh -u "$DEFAULT_USER" -p "$pw" -n "$DEFAULT_HOSTNAME" --accept-license) \
+        | sed "s/$pw/[redacted]/g"
     grep -q "^${DEFAULT_USER}:" "$ROOTFS/etc/passwd" || die "l4t_create_default_user.sh did not create $DEFAULT_USER"
 }
 
