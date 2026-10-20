@@ -32,6 +32,12 @@ export const CONTACT_EMAIL: string | null = clean(env.PUBLIC_CONTACT_EMAIL) ?? n
 /** API origin; "" means same origin as the site. */
 export const API_BASE = trimTrailingSlashes(clean(env.PUBLIC_API_BASE) ?? "");
 
+/** False when the deployment has no server yet (PUBLIC_API_ENABLED=0, set by
+ * scripts/build-web.sh when no API address is configured): the live stats
+ * then show "launching" without requesting anything, and the sign-up form
+ * says it is not open yet instead of failing on submit. */
+export const API_ENABLED = clean(env.PUBLIC_API_ENABLED) !== "0";
+
 /** Live 3D map (another app, deployed at <base>/map/ by default). */
 export const MAP_URL = clean(env.PUBLIC_MAP_URL) ?? sitePath("/map/");
 

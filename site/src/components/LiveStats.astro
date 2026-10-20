@@ -1,12 +1,12 @@
 ---
-import { API_BASE, links } from "../config";
+import { API_BASE, API_ENABLED, links } from "../config";
 import { buildStatsView } from "../lib/stats";
 
 // Server-rendered placeholder: what visitors without JavaScript, or before
 // the first response, see. The client script replaces values in place.
 const initial = buildStatsView(null, null);
 ---
-<div class="live" data-live-stats data-api-base={API_BASE} data-state="loading">
+<div class="live" data-live-stats data-api-base={API_BASE} data-api-enabled={API_ENABLED ? "1" : "0"} data-state="loading">
   <div class="live-head">
     <h2 id="live-title" class="live-title">
       <span class="dot" aria-hidden="true"></span>

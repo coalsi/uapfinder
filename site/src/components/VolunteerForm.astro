@@ -1,5 +1,5 @@
 ---
-import { API_BASE, sitePath } from "../config";
+import { API_BASE, API_ENABLED, links, sitePath } from "../config";
 import { countryOptions } from "../lib/countries";
 import { LIMITS, outcomeMessage } from "../lib/volunteer";
 
@@ -33,9 +33,21 @@ const interests = [
     novalidate
     data-volunteer-form
     data-api-base={API_BASE}
+    data-api-enabled={API_ENABLED ? "1" : "0"}
     aria-labelledby="signup-title"
     aria-describedby="signup-intro"
   >
+    {
+      !API_ENABLED && (
+        <div class="callout callout--warn" data-signup-closed>
+          <p>
+            <strong>Sign-ups open soon.</strong> The project's server is not connected yet, so this form cannot send
+            anything at the moment. Please check back shortly, or watch the <a href={links.repo}>GitHub repository</a>
+            for news.
+          </p>
+        </div>
+      )
+    }
     <div class="error-summary" data-error-summary tabindex="-1" role="alert" hidden>
       <p class="status-title">Please check the following:</p>
       <ul></ul>

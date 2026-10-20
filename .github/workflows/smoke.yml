@@ -1,0 +1,42 @@
+name: Smoke test (deployed site)
+
+# Loads the deployed website and live map in Chromium after every successful
+# Vercel deployment (Vercel reports deployments to GitHub), or on demand.
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Deployment to check
+        default: https://uapfinder.vercel.app
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: github.event_name == 'workflow_dispatch' || github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Check the deployment
+        env:
+          SMOKE_URL: ${{ inputs.url || github.event.deployment_status.environment_url }}
+        run: node scripts/smoke.mjs "$SMOKE_URL"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-screenshots
+          path: site/smoke-screenshots/
+          retention-days: 14

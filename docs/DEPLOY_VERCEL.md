@@ -9,8 +9,9 @@ website at `/` and the live 3D map at `/map/`. Everything is configured by
 By default the project is **static only**. The real-time server runs
 elsewhere (the Mac Studio, see [deploy/mac-studio](../deploy/mac-studio/README.md))
 and the site and map call it by its public address. Until that address is set,
-the map shows a clearly labelled demo network, and the site's live stats show
-"network launching".
+the map shows a clearly labelled demo network, the site's live stats show
+"network launching", and the sign-up form says sign-ups open soon (it sends
+nothing, rather than failing when a volunteer submits).
 
 ## Import the repository (one project)
 
@@ -85,6 +86,15 @@ Marketplace. Nodes must then use HTTPS (Vercel cannot receive UDP). Run
 what it copies, set the variables listed in
 [server/README.md](../server/README.md#deploy-on-vercel), and redeploy. This
 mode has not been tested on Vercel itself.
+
+## Check a deployment
+
+The **Smoke test (deployed site)** workflow in GitHub Actions loads every page
+and the map in Chromium after each successful Vercel deployment, and can be
+run by hand (**Actions → Smoke test → Run workflow**, with any URL). It fails
+on HTTP errors, page or console errors, sideways scrolling on a phone, a map
+that does not render, or a broken download link, and keeps screenshots as a
+run artifact. Locally: `cd site && npm ci && node scripts/smoke.mjs https://uapfinder.vercel.app`.
 
 ## Troubleshooting
 

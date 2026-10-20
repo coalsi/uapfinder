@@ -40,6 +40,12 @@ export async function refresh(root: HTMLElement): Promise<StatsViewModel> {
 export function initLiveStats(): void {
   const root = document.querySelector<HTMLElement>("[data-live-stats]");
   if (!root) return;
+  if (root.dataset.apiEnabled === "0") {
+    // No server is configured for this deployment: show "launching" without
+    // requesting endpoints that do not exist.
+    render(root, buildStatsView(null, null));
+    return;
+  }
   let timer: number | undefined;
   const schedule = () => {
     window.clearTimeout(timer);

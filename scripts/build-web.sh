@@ -19,11 +19,12 @@ if [[ -n "${UAPF_API_BASE:-}" ]]; then
   export PUBLIC_API_BASE="${PUBLIC_API_BASE:-$UAPF_API_BASE}"
   export VITE_API_BASE="${VITE_API_BASE:-$UAPF_API_BASE}"
 fi
-if [[ -z "${VITE_API_BASE:-}" && ! -e "$root/api/index.py" ]]; then
+if [[ -z "${VITE_API_BASE:-}" && -z "${PUBLIC_API_BASE:-}" && ! -e "$root/api/index.py" ]]; then
+  # No server anywhere: demo map, and the site doesn't call endpoints that
+  # don't exist (its stats say "launching", its sign-up form "opening soon").
   export VITE_DEMO="${VITE_DEMO:-1}"
-fi
-if [[ "${VITE_DEMO:-0}" == "1" ]]; then
-  echo "==> no API address set (UAPF_API_BASE): the map is built with demo data"
+  export PUBLIC_API_ENABLED="${PUBLIC_API_ENABLED:-0}"
+  echo "==> no API address set (UAPF_API_BASE): demo map, sign-ups shown as opening soon"
 fi
 # The map links back to the site, which is the same origin in this layout.
 export VITE_SITE_URL="${VITE_SITE_URL:-/}"

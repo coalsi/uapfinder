@@ -225,6 +225,8 @@ export function initVolunteerForm(): void {
 
   initGeolocation(form);
   initCounter(form);
+  // Without a server the button stays disabled and the form explains why.
+  if (form.dataset.apiEnabled === "0") return;
   if (submit) submit.disabled = false;
 
   // Clear a field's error, and its line in the summary, as soon as the
