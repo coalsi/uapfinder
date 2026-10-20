@@ -139,6 +139,13 @@ class Settings:
     live_poll_ms: int = 500
     ws_max_s: Optional[float] = None
     volunteer_rate_per_hour: int = 5
+    # Node enrollment (claim codes); see enrollment.py for the defaults.
+    enroll_rate_per_hour: int = 10
+    tailscale_authkey: Optional[str] = None
+    tailscale_tags: Tuple[str, ...] = ("tag:skynet-node",)
+    node_transport: Optional[str] = None  # None: udp when the UDP listener runs, else https
+    node_udp_host: Optional[str] = None
+    node_udp_port: Optional[int] = None
     storage: str = "local"  # "local" | "s3" | "none"
     storage_dir: str = "data/clips"
     max_clip_bytes: int = 512 * 1024 * 1024
@@ -249,6 +256,16 @@ class Settings:
             event_interval_ns=int(_float(env, "SKYNET_TRACK_EVENT_INTERVAL_MS", 1000.0) * 1e6),
             retention_ns=int(_float(env, "SKYNET_TRACK_RETENTION_H", 6.0) * 3600e9),
         )
+        node_transport = (env.get("SKYNET_NODE_TRANSPORT") or "").strip().lower() or None
+        if node_transport not in (None, "udp", "https"):
+            raise ConfigError("SKYNET_NODE_TRANSPORT must be 'udp' or 'https'")
+        node_udp_port = _int(env, "SKYNET_NODE_UDP_PORT", 0) or None
+        if node_udp_port is not None and not 0 < node_udp_port < 65536:
+            raise ConfigError("SKYNET_NODE_UDP_PORT must be a port number")
+        ts_tags = tuple(t.strip() for t in env.get("SKYNET_TAILSCALE_TAGS", "tag:skynet-node").split(",") if t.strip())
+        for t in ts_tags:
+            if not t.startswith("tag:") or len(t) > 67:
+                raise ConfigError("SKYNET_TAILSCALE_TAGS must be a comma-separated list of tag:<name>")
         cache = env.get("SKYNET_DB_STATEMENT_CACHE", "").strip()
         ws_max = _float(env, "SKYNET_WS_MAX_S", 280.0 if mode == "vercel" else 0.0)
         return cls(
@@ -285,6 +302,12 @@ class Settings:
             live_poll_ms=_int(env, "SKYNET_LIVE_POLL_MS", 1000 if mode == "vercel" else 500),
             ws_max_s=ws_max if ws_max > 0 else None,
             volunteer_rate_per_hour=_int(env, "SKYNET_VOLUNTEER_RATE_PER_HOUR", 5),
+            enroll_rate_per_hour=_int(env, "SKYNET_ENROLL_RATE_PER_HOUR", 10),
+            tailscale_authkey=_first(env, "SKYNET_TAILSCALE_AUTHKEY"),
+            tailscale_tags=ts_tags,
+            node_transport=node_transport,
+            node_udp_host=_first(env, "SKYNET_NODE_UDP_HOST"),
+            node_udp_port=node_udp_port,
             storage=storage,
             storage_dir=env.get("SKYNET_STORAGE_DIR", "data/clips"),
             max_clip_bytes=_int(env, "SKYNET_MAX_CLIP_BYTES", 512 * 1024 * 1024),

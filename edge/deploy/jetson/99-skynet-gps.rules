@@ -1,4 +1,4 @@
-# /etc/udev/rules.d/99-skynet-gps.rules, written by SKY-NET deploy/jetson/setup.sh.
+# /etc/udev/rules.d/99-skynet-gps.rules, written by edge/deploy/install-node.sh.
 # A stable /dev/gps0 for gpsd and the node, whatever the receiver is wired to.
 
 # UART receiver on the 40-pin header (JetPack 6: pins 8/10 enumerate as ttyTHS1) or the

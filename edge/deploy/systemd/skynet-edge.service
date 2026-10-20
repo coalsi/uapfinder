@@ -1,12 +1,20 @@
-# SKY-NET edge node. Installed by deploy/jetson/setup.sh to
-# /etc/systemd/system/skynet-edge.service. NOT tested on Jetson hardware.
+# SKY-NET / UAP Finder edge node. Installed by edge/deploy/install-node.sh (also run
+# by deploy/jetson/setup.sh) to /etc/systemd/system/skynet-edge.service.
+# NOT tested on Jetson hardware.
+#
+# Start-up (docs/NODE_APPLIANCE.md): join the tailnet if the enrollment carried a
+# Tailscale key (root, failure tolerated), regenerate /etc/skynet/edge.yaml from
+# the detected hardware, credentials and calibration (root, also updates chrony's
+# PPS refclock), then run the node as user skynet. Before enrollment `run` waits
+# quietly; it exits (and is restarted) when credentials.json or calibration.json
+# change.
 [Unit]
 Description=SKY-NET edge node (sky camera detection, tracking and uplink)
 Documentation=file:///opt/skynet/src/edge/README.md
 # Frame timestamps need the GPS/PPS-disciplined clock, and the CSI camera
 # needs nvargus-daemon. tailscaled is ordered first when present so the
 # server's MagicDNS name resolves at start-up (the node re-resolves anyway).
-After=network-online.target time-sync.target chrony.service gpsd.service nvargus-daemon.service tailscaled.service
+After=network-online.target time-sync.target chrony.service gpsd.service nvargus-daemon.service tailscaled.service uapfinder-firstboot.service
 Wants=network-online.target time-sync.target gpsd.service
 StartLimitIntervalSec=600
 StartLimitBurst=20
@@ -17,13 +25,16 @@ NotifyAccess=main
 User=skynet
 Group=skynet
 WorkingDirectory=/var/lib/skynet
+# "+": runs as root outside the sandbox below; "-": a failure does not stop the start.
+ExecStartPre=-+/opt/skynet/venv/bin/skynet-edge tailscale-join
+ExecStartPre=-+/opt/skynet/venv/bin/skynet-edge autoconfig --system
 ExecStart=/opt/skynet/venv/bin/skynet-edge run --config /etc/skynet/edge.yaml
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=5
 # Ring-buffer allocation and camera start-up take a few seconds; the node
 # sends READY=1 after the first processed frame.
-TimeoutStartSec=180
+TimeoutStartSec=300
 # On stop the node finishes exporting/encoding buffered clips (CPU-only x264
 # on Orin Nano) and pending uploads before exiting.
 TimeoutStopSec=120
@@ -45,7 +56,7 @@ MemoryMax=6900M
 #   MemoryDenyWriteExecute=yes : breaks JIT (CuPy/NVRTC)
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/skynet /tmp
+ReadWritePaths=/var/lib/skynet /run/skynet /tmp
 ProtectHome=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes

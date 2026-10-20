@@ -1,4 +1,8 @@
-"""``skynet-edge`` command line: run, bench, replay, make-synthetic."""
+"""``skynet-edge`` command line.
+
+Pipeline: run, bench, replay, make-synthetic. Appliance (docs/NODE_APPLIANCE.md):
+detect, autoconfig, setup-server, netsetup, starcal, tailscale-join, admin-requests.
+"""
 
 from __future__ import annotations
 
@@ -31,10 +35,23 @@ def _load(path: Optional[str]) -> EdgeConfig:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    import threading
+
     from .node import EdgeNode
 
     cfg = _load(args.config)
     _setup_logging(args.log_level or cfg.log_level)
+    if cfg.node.credentials_file:
+        from .appliance.credentials import load_credentials
+
+        if load_credentials(cfg.node.credentials_file) is None:
+            from .appliance.waiting import wait_for_enrollment
+
+            stop = threading.Event()
+            signal.signal(signal.SIGTERM, lambda *_: stop.set())
+            signal.signal(signal.SIGINT, lambda *_: stop.set())
+            wait_for_enrollment(cfg, stop)
+            return 0  # systemd restarts the service, which re-runs autoconfig with the credentials
     node = EdgeNode(cfg)
 
     def on_signal(signum: int, _frame: Any) -> None:
@@ -189,6 +206,90 @@ def cmd_make_synthetic(args: argparse.Namespace) -> int:
     return 0
 
 
+def _exit_hard(code: int) -> int:
+    """Exit even if a probe thread is stuck in a driver call (concurrent.futures joins its workers at exit)."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    import threading
+
+    if any(t.name.startswith(("detect", "gps-probe", "i2c-probe")) and t.is_alive() for t in threading.enumerate()):
+        import os
+
+        os._exit(code)
+    return code
+
+
+def cmd_detect(args: argparse.Namespace) -> int:
+    from .appliance.detect import Detector
+
+    _setup_logging(args.log_level or "WARNING")
+    result = Detector(deadline_s=args.deadline).detect()
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return _exit_hard(0)
+
+
+def cmd_autoconfig(args: argparse.Namespace) -> int:
+    import os
+
+    from .appliance.autoconfig import autoconfig, update_chrony
+    from .appliance.paths import Paths
+
+    _setup_logging(args.log_level or "INFO")
+    paths = Paths.from_env()
+    result = autoconfig(paths, write=not args.dry_run)
+    if args.dry_run:
+        print(yaml.safe_dump(result["config"], sort_keys=False), end="")
+    else:
+        log.info("autoconfig: %s -> %s%s", json.dumps(result["summary"], sort_keys=True), paths.edge_yaml,
+                 "" if result["ok"] else f" ({result['error']})")
+    if args.system and not args.dry_run:
+        if os.geteuid() != 0:
+            log.warning("--system needs root; chrony configuration left alone")
+        else:
+            update_chrony(result["detect"], paths)
+    return _exit_hard(0)
+
+
+def cmd_setup_server(args: argparse.Namespace) -> int:
+    from .appliance.web.server import serve
+
+    _setup_logging(args.log_level or "INFO")
+    return serve(args.bind, args.port)
+
+
+def cmd_netsetup(args: argparse.Namespace) -> int:
+    from .appliance.netsetup import main_loop
+
+    _setup_logging(args.log_level or "INFO")
+    return main_loop()
+
+
+def cmd_starcal(args: argparse.Namespace) -> int:
+    from .appliance.starcal_job import run_job
+
+    _setup_logging(args.log_level or "INFO")
+    summary = run_job(force=args.force)
+    print(json.dumps(summary, sort_keys=True))
+    return 0
+
+
+def cmd_tailscale_join(args: argparse.Namespace) -> int:
+    from .appliance.tailscale import join
+
+    _setup_logging(args.log_level or "INFO")
+    return join(wait_s=args.wait)
+
+
+def cmd_admin_requests(args: argparse.Namespace) -> int:
+    from .appliance.admin import process_spool
+
+    _setup_logging(args.log_level or "INFO")
+    for _name, ok, _msg in process_spool():
+        if not ok:
+            return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="skynet-edge", description="SKY-NET edge node")
     p.add_argument("--version", action="version", version=f"skynet-edge {__version__}")
@@ -233,6 +334,34 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--seed", type=int, default=1)
     m.add_argument("--t0-ns", type=int, help="timestamp of the first frame (default 2026-09-21T13:33:20Z)")
     m.set_defaults(func=cmd_make_synthetic)
+
+    d = sub.add_parser("detect", help="print the attached hardware as JSON")
+    d.add_argument("--deadline", type=float, default=8.0, help="overall time limit in seconds")
+    d.set_defaults(func=cmd_detect)
+
+    ac = sub.add_parser("autoconfig", help="write /etc/skynet/edge.yaml from hardware, credentials and calibration")
+    ac.add_argument("--dry-run", action="store_true", help="print the configuration instead of writing it")
+    ac.add_argument("--system", action="store_true", help="as root: also update chrony's GPS/PPS refclocks")
+    ac.set_defaults(func=cmd_autoconfig)
+
+    ss = sub.add_parser("setup-server", help="serve the setup and status page")
+    ss.add_argument("--bind", default="0.0.0.0")
+    ss.add_argument("--port", type=int, default=80)
+    ss.set_defaults(func=cmd_setup_server)
+
+    ns = sub.add_parser("netsetup", help="(root) fallback Wi-Fi hotspot and the uapfinder.local alias")
+    ns.set_defaults(func=cmd_netsetup)
+
+    sc = sub.add_parser("starcal", help="star calibration, if it is dark, there is a fix and it is due")
+    sc.add_argument("--force", action="store_true", help="recalibrate even if the calibration is recent")
+    sc.set_defaults(func=cmd_starcal)
+
+    tj = sub.add_parser("tailscale-join", help="(root) join the tailnet with the enrollment's auth key")
+    tj.add_argument("--wait", type=float, default=90.0, help="seconds to wait for the tailnet")
+    tj.set_defaults(func=cmd_tailscale_join)
+
+    ar = sub.add_parser("admin-requests", help="(root) carry out queued setup-page requests")
+    ar.set_defaults(func=cmd_admin_requests)
     return p
 
 

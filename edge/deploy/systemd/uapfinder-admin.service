@@ -1,0 +1,9 @@
+# Carries out the setup page's queued requests as root, after checking each file
+# (owner skynet, regular file, known action). See skynet_edge/appliance/admin.py.
+[Unit]
+Description=UAP Finder privileged requests from the setup page
+
+[Service]
+Type=oneshot
+ExecStart=/opt/skynet/venv/bin/skynet-edge admin-requests
+TimeoutStartSec=120

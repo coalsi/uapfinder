@@ -120,3 +120,41 @@ def test_feed_disabled_by_default():
     feed.start()  # no thread, no error
     feed.stop()
     assert feed.aircraft(T0_NS) == []
+
+
+def test_online_feed_is_polite():
+    """Rounded position in the URL, a User-Agent, and a back-off after HTTP 429."""
+
+    class Resp:
+        def __init__(self, status, headers=None):
+            self.status_code, self.headers = status, headers or {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                import requests
+
+                raise requests.HTTPError(f"{self.status_code}")
+
+        def json(self):
+            return {"ac": [], "now": T0_NS // 1_000_000}
+
+    class Session:
+        def __init__(self):
+            self.calls = []
+            self.next = Resp(429, {"Retry-After": "120"})
+
+        def get(self, url, headers=None, timeout=None):
+            self.calls.append((url, headers))
+            return self.next
+
+    cfg = parse_config({"adsb": {"source": "adsbx_v2", "query_decimals": 2, "radius_nm": 40,
+                                 "url": "https://api.adsb.lol/v2/point/{lat}/{lon}/{dist}"}}).adsb
+    feed = AdsbFeed(cfg, position=lambda: OBSERVER, clock=lambda: T0_NS)
+    feed._session = Session()
+    feed.poll_once()
+    url, headers = feed._session.calls[0]
+    assert url == "https://api.adsb.lol/v2/point/33.63/-112.37/40"
+    assert headers["User-Agent"].startswith("uapfinder-node/")
+    assert feed.errors == 1
+    feed.poll_once()  # inside the Retry-After window: no request at all
+    assert len(feed._session.calls) == 1

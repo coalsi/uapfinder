@@ -1,0 +1,5 @@
+# /etc/udev/rules.d/90-uapfinder-rtlsdr.rules, written by edge/deploy/install-node.sh (the image build
+# writes the same rule from edge/deploy/image/install-readsb.sh).
+# Start readsb (local ADS-B decoding) only when an RTL-SDR receiver is plugged in;
+# the rule also fires for a receiver present at boot (udev coldplug).
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0bda", ATTR{idProduct}=="2838|2832", GROUP="plugdev", MODE="0660", TAG+="systemd", ENV{SYSTEMD_WANTS}+="readsb.service"

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skynet-edge"
-version = "0.1.0"
+version = "0.2.0"
 description = "SKY-NET edge node: sky camera capture, detection, tracking and uplink for Jetson Orin Nano"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,6 +37,9 @@ skynet-edge = "skynet_edge.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["skynet_edge*"]
+
+[tool.setuptools.package-data]
+"skynet_edge.appliance.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

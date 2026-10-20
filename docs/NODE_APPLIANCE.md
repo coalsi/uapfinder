@@ -187,6 +187,16 @@ matter for fast objects.
   above enabled. No desktop. NVIDIA's first-boot configuration wizard is
   skipped (a default `uapfinder` account exists with SSH disabled until the
   device password is set in the setup page).
+* The root filesystem is NVIDIA's *minimal* flavor (`nv_build_samplefs.sh
+  --flavor minimal`), so the compressed image stays well under the release
+  limit. The overlays are not merged into NVIDIA's boot entry: the image
+  adds a separate `uapfinder` entry to `/boot/extlinux/extlinux.conf` (the
+  stock `primary` entry stays as the fallback in the boot menu). Writing it
+  needs the running board's identity, so `uapfinder-overlays.service` does
+  it on the first boot and **reboots once** before the node's own services
+  start; `touch /etc/uapfinder/overlays.disabled` reverses it. readsb is
+  installed disabled and started by a udev rule when an RTL-SDR is plugged
+  in; tailscaled is disabled until enrollment returns an auth key.
 * Built by `.github/workflows/node-image.yml` on GitHub-hosted runners
   (workflow_dispatch and tags `node-image-v*`), published as
   `uapfinder-node-<version>-orin-nano.img.xz` plus its SHA-256 to a GitHub
@@ -202,7 +212,9 @@ matter for fast objects.
 Developer kits that left the factory with JetPack 5 firmware cannot boot a
 JetPack 6 card until their firmware is updated once with NVIDIA's own
 JetPack 5.1.3 SD card image (NVIDIA's getting-started guide). The build guide
-explains how to tell and how to do it.
+explains how to tell and how to do it. Kits already on 36.x firmware are
+brought to the card's 36.5.2 firmware automatically on its first boot by
+NVIDIA's bootloader package (one extra restart; do not cut power).
 
 ## Not yet verified on hardware
 

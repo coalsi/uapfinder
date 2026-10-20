@@ -1,0 +1,21 @@
+# Installed by edge/deploy/platform/install-platform.sh.
+# Keeps the "uapfinder" boot entry (GPS PPS on header pin 7 and the IMX477 on
+# CAM0, as device-tree overlays) in /boot/extlinux/extlinux.conf in step with
+# the installed kernel DTB, and reboots once when it had to change it (the
+# very first boot of a new card). The stock "primary" entry stays as the
+# fallback. Disable with: touch /etc/uapfinder/overlays.disabled
+[Unit]
+Description=UAP Finder device-tree overlays (GPS PPS, CSI camera)
+Documentation=file:///usr/lib/uapfinder/platform/configure-overlays.sh
+After=local-fs.target
+Before=uapfinder-firstboot.service uapfinder-setup.service uapfinder-netsetup.service skynet-edge.service
+ConditionPathExists=/proc/device-tree/compatible
+ConditionPathExists=/boot/extlinux/extlinux.conf
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/uapfinder/platform/configure-overlays.sh --reboot-if-changed
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+# /etc/polkit-1/localauthority/50-local.d/50-uapfinder-networkmanager.pkla
+# (polkit 0.105, Ubuntu 22.04 / JetPack 6). Lets the setup page (user skynet)
+# scan for and join Wi-Fi networks and run the hotspot through NetworkManager.
+# Nothing else is granted.
+[UAP Finder setup page: NetworkManager]
+Identity=unix-user:skynet
+Action=org.freedesktop.NetworkManager.*
+ResultAny=yes
+ResultInactive=yes
+ResultActive=yes

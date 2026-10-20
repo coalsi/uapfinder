@@ -1,0 +1,47 @@
+# UAP Finder node: setup and status page on port 80 (docs/NODE_APPLIANCE.md).
+# Installed by edge/deploy/install-node.sh. NOT tested on Jetson hardware.
+[Unit]
+Description=UAP Finder setup and status page (http://uapfinder.local)
+Documentation=file:///opt/skynet/src/docs/NODE_APPLIANCE.md
+After=network.target uapfinder-firstboot.service NetworkManager.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=skynet
+Group=skynet
+# journalctl for the diagnostics bundle; netdev for NetworkManager on some setups.
+SupplementaryGroups=systemd-journal
+ExecStart=/opt/skynet/venv/bin/skynet-edge setup-server --port 80
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=3
+# Port 80 without root. The page has no other privileges: Wi-Fi goes through
+# NetworkManager (polkit grants user skynet its actions), restart/shutdown and
+# the login password through the root uapfinder-admin.path/.service spool.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/skynet /run/skynet
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+UMask=0077
+MemoryMax=300M
+
+[Install]
+WantedBy=multi-user.target

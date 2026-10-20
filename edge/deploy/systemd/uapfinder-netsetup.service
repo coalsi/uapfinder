@@ -1,0 +1,21 @@
+# UAP Finder node: fallback Wi-Fi hotspot after 90 s without a network, and the
+# uapfinder.local mDNS alias. Installed by edge/deploy/install-node.sh.
+# NOT tested on Jetson hardware (hotspot support depends on the Wi-Fi driver).
+[Unit]
+Description=UAP Finder network setup (hotspot UAPFinder-XXXX, uapfinder.local)
+Documentation=file:///opt/skynet/src/docs/NODE_APPLIANCE.md
+After=NetworkManager.service avahi-daemon.service uapfinder-firstboot.service
+Wants=NetworkManager.service avahi-daemon.service
+
+[Service]
+Type=simple
+ExecStart=/opt/skynet/venv/bin/skynet-edge netsetup
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

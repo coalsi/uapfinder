@@ -1,7 +1,8 @@
-# /etc/default/gpsd, written by SKY-NET deploy/jetson/setup.sh.
+# /etc/default/gpsd, written by edge/deploy/install-node.sh.
 START_DAEMON="true"
-# The receiver is a fixed serial device (udev symlink /dev/gps0), not hot-plugged.
-USBAUTO="false"
+# The header receiver (pins 8/10, ttyTHS1) appears as the udev symlink /dev/gps0.
+# USBAUTO: USB receivers plugged in later are added by gpsd's own udev hotplug rules.
+USBAUTO="@USBAUTO@"
 DEVICES="/dev/gps0"
 # -n: read the receiver even when no client is connected, so chrony always
 #     gets GPS time through shared memory segment 0.

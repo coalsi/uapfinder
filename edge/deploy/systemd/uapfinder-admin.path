@@ -1,0 +1,11 @@
+# Starts uapfinder-admin.service (root) whenever the setup page queues a request
+# (restart, reboot, shut down, login password) in /run/skynet/admin.
+[Unit]
+Description=UAP Finder privileged request spool
+
+[Path]
+DirectoryNotEmpty=/run/skynet/admin
+Unit=uapfinder-admin.service
+
+[Install]
+WantedBy=multi-user.target

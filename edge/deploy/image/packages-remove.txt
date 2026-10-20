@@ -1,0 +1,24 @@
+# Packages purged from the image if present (shell globs allowed, matched
+# against installed package names). The minimal root filesystem has none of
+# these; the list matters for ROOTFS_SOURCE=sample and as a guard. A package
+# whose removal would take any nvidia-l4t-* package with it is kept (warning).
+ubuntu-desktop
+ubuntu-desktop-minimal
+gdm3
+gnome-shell
+gnome-*
+nautilus
+lightdm
+unity-greeter
+xserver-xorg-core
+xserver-xorg
+libreoffice-*
+thunderbird*
+firefox*
+chromium*
+snapd
+oem-config
+oem-config-gtk
+ubiquity*
+whoopsie
+apport

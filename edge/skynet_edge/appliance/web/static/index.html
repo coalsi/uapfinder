@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>UAP Finder node</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="wrap top-inner">
+    <div class="brand"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="1.6"/></svg>
+      <span>UAP Finder node</span></div>
+    <div class="who"><span id="hostname" class="mono">…</span>
+      <button id="logout" class="link" type="button" hidden>Log out</button></div>
+  </div>
+</header>
+
+<main id="main" class="wrap">
+  <p id="banner" class="banner" role="status" aria-live="polite" hidden></p>
+
+  <section id="login" class="card" hidden aria-labelledby="login-h">
+    <h2 id="login-h">Log in</h2>
+    <p class="muted">This node has a device password. The status below stays readable; changing anything needs the password.</p>
+    <form id="login-form" class="row">
+      <label for="login-pw">Device password</label>
+      <input id="login-pw" type="password" autocomplete="current-password" required minlength="8">
+      <button type="submit">Log in</button>
+    </form>
+  </section>
+
+  <section id="setup" class="card" aria-labelledby="setup-h" hidden>
+    <h2 id="setup-h">Set up this node</h2>
+    <ol class="steps">
+      <li id="step-net"><h3>Network</h3>
+        <p class="muted" id="net-summary">Checking the network…</p>
+        <p class="muted">Ethernet is the most reliable. To use Wi-Fi, choose your network in <a href="#network">Network</a> below.</p>
+      </li>
+      <li id="step-claim"><h3>Claim code</h3>
+        <form id="enroll-form" class="row">
+          <label for="claim">Claim code from your network coordinator</label>
+          <input id="claim" name="code" inputmode="text" autocapitalize="characters" autocomplete="off" spellcheck="false"
+                 placeholder="XXXX-XXXX" maxlength="11" pattern="[0-9A-Za-z]{4}-?[0-9A-Za-z]{4}" required aria-describedby="claim-help">
+          <button type="submit">Enroll</button>
+        </form>
+        <p id="claim-help" class="muted small">8 letters and digits; the dash and upper/lower case do not matter.</p>
+        <p id="enrolled-as" class="ok" hidden></p>
+      </li>
+      <li id="step-pw"><h3>Device password</h3>
+        <form id="pw-form" class="row">
+          <label for="pw-current" id="pw-current-label" hidden>Current password</label>
+          <input id="pw-current" type="password" autocomplete="current-password" hidden>
+          <label for="pw-new">New device password (at least 8 characters)</label>
+          <input id="pw-new" type="password" autocomplete="new-password" minlength="8" required>
+          <label for="pw-new2">Repeat it</label>
+          <input id="pw-new2" type="password" autocomplete="new-password" minlength="8" required>
+          <button type="submit">Set password</button>
+        </form>
+        <p class="muted small">Protects this page on your network. It also becomes the password of the <span class="mono">uapfinder</span> login (SSH turns on once it is set).</p>
+      </li>
+      <li><h3>Aim the camera</h3><p class="muted">Use the live preview below: open sky, from 45° up to straight up, no roofs or trees in the middle of the picture.</p></li>
+    </ol>
+  </section>
+
+  <section class="card" aria-labelledby="status-h">
+    <div class="card-head"><h2 id="status-h">Status</h2><span id="updated" class="muted small" aria-live="off"></span></div>
+    <ul id="warnings" class="warnings" aria-live="polite"></ul>
+    <dl id="status" class="grid"></dl>
+  </section>
+
+  <section class="card" aria-labelledby="preview-h">
+    <div class="card-head"><h2 id="preview-h">Live preview</h2>
+      <button id="preview-toggle" type="button" aria-pressed="false">Start preview</button></div>
+    <div class="preview" id="preview-box">
+      <img id="preview-img" alt="Live view from the sky camera" hidden>
+      <canvas id="preview-overlay" aria-hidden="true"></canvas>
+      <p id="preview-msg" class="muted center">The preview uses the camera for about one frame per second while it is on.</p>
+    </div>
+    <p id="aim" class="small" aria-live="polite"></p>
+  </section>
+
+  <section id="network" class="card" aria-labelledby="network-h">
+    <h2 id="network-h">Network</h2>
+    <ul id="net-devices" class="plain"></ul>
+    <div class="row-buttons"><button id="wifi-scan" type="button">Scan for Wi-Fi networks</button></div>
+    <form id="wifi-form" class="row" hidden>
+      <label for="wifi-ssid">Network</label>
+      <select id="wifi-ssid" required></select>
+      <label for="wifi-pw">Wi-Fi password</label>
+      <input id="wifi-pw" type="password" autocomplete="off" minlength="8" maxlength="64">
+      <button type="submit">Join</button>
+      <p class="muted small">If your phone is connected to the node's own <span class="mono">UAPFinder-…</span> hotspot, it will disconnect when the node joins: reconnect the phone to that network and open <span class="mono">http://uapfinder.local</span>.</p>
+    </form>
+    <p id="wifi-msg" class="small" aria-live="polite"></p>
+  </section>
+
+  <section class="card" aria-labelledby="adv-h">
+    <h2 id="adv-h">Maintenance</h2>
+    <div class="row-buttons">
+      <a id="diag" class="button" href="/api/diagnostics" download>Download diagnostics</a>
+      <button type="button" data-action="restart-node">Restart node software</button>
+      <button type="button" data-action="reboot">Reboot</button>
+      <button type="button" data-action="poweroff" class="danger">Shut down</button>
+    </div>
+    <details>
+      <summary>Advanced</summary>
+      <form id="settings-form" class="row">
+        <label for="enroll-url">Enrollment server</label>
+        <input id="enroll-url" type="url" inputmode="url" placeholder="https://…" required>
+        <button type="submit">Save</button>
+      </form>
+    </details>
+  </section>
+</main>
+<footer class="wrap muted small foot"><span id="version"></span> · <a href="https://github.com/coalsi/uapfinder">UAP Finder</a></footer>
+</body>
+</html>

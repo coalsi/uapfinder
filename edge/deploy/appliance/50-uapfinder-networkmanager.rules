@@ -1,0 +1,7 @@
+// /etc/polkit-1/rules.d/50-uapfinder-networkmanager.rules (polkit >= 0.106, JavaScript
+// rules). Same grant as the .pkla file, for newer polkit versions that ignore .pkla.
+polkit.addRule(function (action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 && subject.user === "skynet") {
+        return polkit.Result.YES;
+    }
+});

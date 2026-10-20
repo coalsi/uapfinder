@@ -367,6 +367,39 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.execute("DELETE FROM volunteers WHERE id = $1", volunteer_id) == "DELETE 1"
 
+    # --- enrollment codes ----------------------------------------------------
+
+    async def insert_enrollment_codes(self, codes: List[str], label: Optional[str], created_ns: int,
+                                      expires_ns: int) -> List[str]:
+        """Insert codes; returns those that were new (a collision is simply skipped)."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "INSERT INTO enrollment_codes (code, label, created_ns, expires_ns)"
+                " SELECT c, $2, $3, $4 FROM unnest($1::text[]) AS c ON CONFLICT DO NOTHING RETURNING code",
+                codes, label, created_ns, expires_ns)
+        return [r["code"] for r in rows]
+
+    async def claim_enrollment_code(self, code: str, now_ns: int, node_id: str,
+                                    hardware: Dict[str, Any]) -> Dict[str, Any]:
+        """Atomically mark a code used. ``{"status": "ok"|"unknown"|"used"|"expired", "label": ...}``."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "UPDATE enrollment_codes SET used_ns = $2, node_id = $3, hardware = $4::jsonb"
+                " WHERE code = $1 AND used_ns IS NULL AND expires_ns > $2 RETURNING label",
+                code, now_ns, node_id, _dumps(hardware))
+            if row is not None:
+                return {"status": "ok", "label": row["label"]}
+            row = await conn.fetchrow("SELECT used_ns, expires_ns FROM enrollment_codes WHERE code = $1", code)
+        if row is None:
+            return {"status": "unknown"}
+        return {"status": "used" if row["used_ns"] is not None else "expired"}
+
+    async def list_enrollment_codes(self) -> List[Dict[str, Any]]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT code, label, created_ns, expires_ns, used_ns, node_id, hardware"
+                                    " FROM enrollment_codes ORDER BY created_ns, code")
+        return [{**dict(r), "hardware": orjson.loads(r["hardware"]) if r["hardware"] else None} for r in rows]
+
 
 async def migrate(url: str, directory: Path = MIGRATIONS_DIR) -> List[str]:
     """Apply pending ``NNN_*.sql`` files in order; returns the applied versions.

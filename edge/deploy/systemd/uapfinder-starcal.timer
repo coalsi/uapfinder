@@ -1,0 +1,11 @@
+[Unit]
+Description=UAP Finder star calibration every 30 minutes
+
+[Timer]
+OnBootSec=10min
+OnCalendar=*:0/30
+AccuracySec=1min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

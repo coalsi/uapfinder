@@ -1,0 +1,238 @@
+name: Node image
+
+# Builds the flashable microSD card image for the Jetson Orin Nano developer
+# kit (edge/deploy/image/README.md): uapfinder-node-<version>-orin-nano.img.xz
+# plus SHA256SUMS, uploaded as a workflow artifact and, when publishing, to a
+# GitHub Release.
+#
+# Run it from the Actions tab ("Node image" -> "Run workflow"), or push a tag
+# node-image-v<version> (always publishes).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image version, e.g. 0.2.0 (file name uapfinder-node-<version>-orin-nano.img.xz)"
+        required: true
+        type: string
+      enroll_url:
+        description: "Enrollment server baked into /etc/skynet/defaults.yaml (empty: the repository variable UAPF_ENROLL_URL)"
+        required: false
+        type: string
+        default: ""
+      publish:
+        description: "Publish to the GitHub Release node-image-v<version>"
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "node-image-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: node-image-${{ github.ref }}-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  WORK_ROOT: /mnt/uapf
+
+jobs:
+  image:
+    name: Orin Nano SD card image
+    # x86_64 Ubuntu 22.04: the host NVIDIA's R36 flashing tools support.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve version, enroll URL and publishing
+        id: cfg
+        env:
+          IN_VERSION: ${{ inputs.version }}
+          IN_URL: ${{ inputs.enroll_url }}
+          IN_PUBLISH: ${{ inputs.publish }}
+          VAR_URL: ${{ vars.UAPF_ENROLL_URL }}
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == push ]]; then
+            version="${REF_NAME#node-image-v}"
+            publish=true
+          else
+            version="$IN_VERSION"
+            publish="$IN_PUBLISH"
+          fi
+          [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+_-]*$ ]] || { echo "::error::bad version '$version'"; exit 1; }
+          url="${IN_URL:-$VAR_URL}"
+          if [[ -z "$url" ]]; then
+            echo "::error::No enrollment URL: pass the enroll_url input or set the repository variable UAPF_ENROLL_URL (Settings -> Secrets and variables -> Actions -> Variables)."
+            exit 1
+          fi
+          [[ "$url" =~ ^https?://[^[:space:]]+$ ]] || { echo "::error::enroll URL '$url' is not an http(s) URL"; exit 1; }
+          name="uapfinder-node-${version}-orin-nano"
+          {
+            echo "version=$version"
+            echo "enroll_url=$url"
+            echo "publish=$publish"
+            echo "name=$name"
+            echo "tag=node-image-v$version"
+            echo "versions_hash=${{ hashFiles('edge/deploy/image/versions.env') }}"
+          } >>"$GITHUB_OUTPUT"
+          echo "Building $name.img.xz (enroll_url=$url, publish=$publish)"
+
+      - name: Free disk space (remove preinstalled SDKs)
+        run: |
+          set -euo pipefail
+          df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/share/powershell \
+            /usr/share/swift /usr/local/julia* /opt/az /usr/local/lib/node_modules
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile
+          sudo mkdir -p "$WORK_ROOT/work" "$WORK_ROOT/cache" "$WORK_ROOT/out"
+          sudo chown -R "$(id -u):$(id -g)" "$WORK_ROOT"
+          df -h / /mnt
+
+      # The BSP download (about 700 MB) and the minimal root filesystem that
+      # nv_build_samplefs.sh builds under qemu (about an hour) are cached
+      # separately, keyed on versions.env (and the BSP's own files).
+      - name: Restore download cache
+        id: cache-dl
+        uses: actions/cache/restore@v6
+        with:
+          path: /mnt/uapf/cache/dl
+          key: node-image-dl-${{ steps.cfg.outputs.versions_hash }}
+
+      - name: Restore rootfs cache
+        id: cache-rootfs
+        uses: actions/cache/restore@v6
+        with:
+          path: /mnt/uapf/cache/rootfs
+          key: node-image-rootfs-${{ steps.cfg.outputs.versions_hash }}
+
+      - name: Host packages and qemu binfmt
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static binfmt-support \
+            device-tree-compiler lbzip2 xz-utils gdisk shellcheck
+          ls /proc/sys/fs/binfmt_misc/
+          cat /proc/sys/fs/binfmt_misc/qemu-aarch64
+
+      - name: Lint the build scripts
+        run: shellcheck -x edge/deploy/image/*.sh edge/deploy/image/tests/*.sh edge/deploy/platform/*.sh
+
+      - name: Download and verify the BSP
+        run: |
+          set -euo pipefail
+          # Downloads go to cache/dl and the built rootfs to cache/rootfs
+          # (--rootfs-cache), so each is saved as soon as it exists.
+          mkdir -p "$WORK_ROOT/cache/dl" "$WORK_ROOT/cache/rootfs"
+          sudo ./edge/deploy/image/build-image.sh --version "${{ steps.cfg.outputs.version }}" \
+            --enroll-url "${{ steps.cfg.outputs.enroll_url }}" \
+            --work "$WORK_ROOT/work" --cache "$WORK_ROOT/cache/dl" --out "$WORK_ROOT/out" \
+            --only-through download
+
+      - name: Save download cache
+        if: steps.cache-dl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: /mnt/uapf/cache/dl
+          key: node-image-dl-${{ steps.cfg.outputs.versions_hash }}
+
+      - name: Build the root filesystem
+        run: |
+          set -euo pipefail
+          sudo ./edge/deploy/image/build-image.sh --version "${{ steps.cfg.outputs.version }}" \
+            --enroll-url "${{ steps.cfg.outputs.enroll_url }}" \
+            --work "$WORK_ROOT/work" --cache "$WORK_ROOT/cache/dl" --rootfs-cache "$WORK_ROOT/cache/rootfs" \
+            --out "$WORK_ROOT/out" --only-through rootfs
+
+      - name: Save rootfs cache
+        if: steps.cache-rootfs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: /mnt/uapf/cache/rootfs
+          key: node-image-rootfs-${{ steps.cfg.outputs.versions_hash }}
+
+      - name: Build, check and compress the image
+        run: |
+          set -euo pipefail
+          sudo ./edge/deploy/image/build-image.sh --version "${{ steps.cfg.outputs.version }}" \
+            --enroll-url "${{ steps.cfg.outputs.enroll_url }}" \
+            --work "$WORK_ROOT/work" --cache "$WORK_ROOT/cache/dl" --rootfs-cache "$WORK_ROOT/cache/rootfs" \
+            --out "$WORK_ROOT/out"
+          ls -l "$WORK_ROOT/out"
+          df -h /mnt
+
+      - name: Check the release-file size limit
+        run: |
+          set -euo pipefail
+          f="$WORK_ROOT/out/${{ steps.cfg.outputs.name }}.img.xz"
+          size=$(stat -c %s "$f")
+          echo "compressed image: $size bytes ($(numfmt --to=iec "$size"))"
+          if [ "$size" -ge 2147483648 ]; then
+            echo "::error::$f is $(numfmt --to=iec "$size"): GitHub release files must be under 2 GiB. Slim the image (edge/deploy/image/README.md, 'Image size')."
+            exit 1
+          fi
+          echo "### Node image ${{ steps.cfg.outputs.version }}: $(numfmt --to=iec "$size")" >>"$GITHUB_STEP_SUMMARY"
+          sed 's/^/    /' "$WORK_ROOT/out/SHA256SUMS" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the image as a workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.cfg.outputs.name }}
+          path: |
+            /mnt/uapf/out/*.img.xz
+            /mnt/uapf/out/SHA256SUMS
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
+
+      - name: Publish the GitHub Release
+        if: steps.cfg.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.cfg.outputs.tag }}
+          NAME: ${{ steps.cfg.outputs.name }}
+          VERSION: ${{ steps.cfg.outputs.version }}
+          ENROLL_URL: ${{ steps.cfg.outputs.enroll_url }}
+        run: |
+          set -euo pipefail
+          out="$WORK_ROOT/out"
+          notes="$out/release-notes.md"
+          {
+            echo "UAP Finder node image $VERSION for the **Jetson Orin Nano developer kit** (microSD card)."
+            echo
+            echo "Jetson Linux R36.5.2 (JetPack 6.2.3). Enrollment server: \`$ENROLL_URL\`."
+            echo
+            echo "1. Download \`$NAME.img.xz\` and write it to a 64 GB or larger microSD card with balenaEtcher (it accepts the .xz directly)."
+            echo "2. Developer kits still on JetPack 5 firmware need a one-time firmware update first (see the build guide)."
+            echo "3. Optional check: \`sha256sum -c SHA256SUMS\` (macOS: \`shasum -a 256 -c SHA256SUMS\`)."
+            echo
+            echo "Not yet tested on hardware: booting the image, the CSI camera and PPS overlays and the hotspot need a real device."
+            echo
+            echo "Contains NVIDIA Jetson Linux software under the NVIDIA Software License Agreement, unmodified."
+            echo
+            echo "Built from ${GITHUB_SHA} by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          } >"$notes"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$out/$NAME.img.xz" "$out/SHA256SUMS" --clobber
+            gh release edit "$TAG" --notes-file "$notes"
+          else
+            gh release create "$TAG" "$out/$NAME.img.xz" "$out/SHA256SUMS" \
+              --title "Node image $VERSION" --notes-file "$notes" --target "$GITHUB_SHA"
+          fi
+          gh release view "$TAG"
+
+      - name: Clean up mounts
+        if: always()
+        run: |
+          findmnt -rn -o TARGET | grep '^/mnt/uapf/' | sort -r | xargs -r sudo umount -l || true
+          sudo losetup -D || true

@@ -1,4 +1,4 @@
-"""``skynet-server`` command line: serve, migrate, keygen, node-key.
+"""``skynet-server`` command line: serve, migrate, keygen, node-key, enroll-codes.
 
 Configuration comes from ``SKYNET_*`` environment variables (see
 .env.example); the few flags here override the most common ones for local
@@ -109,6 +109,61 @@ def cmd_node_key(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _codes_via_db(url: str, count: int, label: Optional[str], hours: float) -> List[dict]:
+    import time
+
+    from . import enrollment as enr
+    from .persistence import Database
+
+    db = Database(url, statement_cache=0, max_size=1)
+    await db.start()
+    try:
+        now = time.time_ns()
+        expires = now + int(hours * 3600e9)
+        made: List[str] = []
+        for _ in range(10):
+            if len(made) >= count:
+                break
+            made += await db.insert_enrollment_codes([enr.new_code() for _ in range(count - len(made))], label, now,
+                                                     expires)
+    finally:
+        await db.close()
+    return [{"code": enr.format_code(c), "expires_ns": expires} for c in made]
+
+
+def _codes_via_api(server: str, token: str, count: int, label: Optional[str], hours: float) -> List[dict]:
+    import json
+    import urllib.request
+
+    body = json.dumps({"count": count, "label": label, "expires_in_h": hours}).encode()
+    req = urllib.request.Request(server.rstrip("/") + "/api/v1/enrollments", data=body, method="POST",
+                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 - URL given by the coordinator
+        return json.loads(resp.read())["codes"]
+
+
+def cmd_enroll_codes(args: argparse.Namespace) -> int:
+    import datetime
+
+    if not 1 <= args.count <= 200:
+        raise SystemExit("--count must be 1-200")
+    if args.server:
+        token = os.environ.get("SKYNET_ADMIN_TOKEN", "")
+        if not token:
+            raise SystemExit("set SKYNET_ADMIN_TOKEN to create codes through the API")
+        codes = _codes_via_api(args.server, token, args.count, args.label, args.expires_h)
+    else:
+        settings = _settings()
+        url = args.database_url or settings.database_url_unpooled or settings.database_url
+        if not url:
+            raise SystemExit("set SKYNET_DATABASE_URL (or pass --database-url, or --server URL to use the API)")
+        codes = asyncio.run(_codes_via_db(url, args.count, args.label, args.expires_h))
+    for c in codes:
+        exp = datetime.datetime.fromtimestamp(c["expires_ns"] / 1e9, datetime.timezone.utc)
+        print(f"{c['code']}  expires {exp:%Y-%m-%d %H:%M} UTC")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="skynet-server", description="SKY-NET server")
     parser.add_argument("--env-file", help="load KEY=VALUE settings from this file first")
@@ -133,6 +188,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     nk = sub.add_parser("node-key", help="print the HMAC key of a node (derived from SKYNET_MASTER_KEY)")
     nk.add_argument("node_id")
     nk.set_defaults(func=cmd_node_key)
+
+    ec = sub.add_parser("enroll-codes", help="create single-use claim codes for new nodes")
+    ec.add_argument("--count", type=int, default=1, help="how many codes (1-200)")
+    ec.add_argument("--label", help="free text stored with the codes, e.g. 'Phoenix pilot'")
+    ec.add_argument("--expires-h", type=float, default=720.0, help="validity in hours (default 30 days)")
+    ec.add_argument("--database-url", help="write to this database (default SKYNET_DATABASE_URL)")
+    ec.add_argument("--server", help="instead, call POST /api/v1/enrollments on this server (SKYNET_ADMIN_TOKEN)")
+    ec.set_defaults(func=cmd_enroll_codes)
 
     args = parser.parse_args(argv)
     _load_env_file(args.env_file)

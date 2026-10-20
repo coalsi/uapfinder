@@ -48,13 +48,23 @@ def _check(cond: bool, path: str, msg: str) -> None:
 
 @dataclass
 class NodeConfig:
+    """Node identity.
+
+    ``credentials_file`` (written by enrollment, see
+    ``appliance/credentials.py``) supplies the key as its ``node_key``
+    member; ``skynet-edge run`` waits until that file exists. Set only one of
+    ``key_hex``, ``key_file`` and ``credentials_file``.
+    """
+
     node_id: str = "node-dev"
     key_hex: Optional[str] = None
     key_file: Optional[str] = None
+    credentials_file: Optional[str] = None
 
     def validate(self, path: str) -> None:
         _check(bool(_NODE_ID_RE.match(self.node_id)), f"{path}.node_id", "must be 1-64 chars of [A-Za-z0-9_.:-]")
-        _check(not (self.key_hex and self.key_file), path, "set only one of key_hex and key_file")
+        _check(sum(bool(x) for x in (self.key_hex, self.key_file, self.credentials_file)) <= 1, path,
+               "set only one of key_hex, key_file and credentials_file")
         if self.key_hex is not None:
             _check(bool(_HEX_KEY_RE.match(self.key_hex)), f"{path}.key_hex", "must be 64 hex characters")
 
@@ -63,6 +73,13 @@ class NodeConfig:
         text = self.key_hex
         if self.key_file:
             text = Path(self.key_file).read_text(encoding="ascii").strip()
+        if self.credentials_file:
+            import json
+
+            try:
+                text = str(json.loads(Path(self.credentials_file).read_text(encoding="utf-8"))["node_key"])
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise ConfigError(f"cannot read node_key from {self.credentials_file}: {exc}") from None
         if text is None:
             return None
         if not _HEX_KEY_RE.match(text):
@@ -199,13 +216,26 @@ class Bno055Config:
 
 @dataclass
 class AttitudeConfig:
+    """Camera pointing.
+
+    ``pointing_source`` and ``pointing_sigma_deg`` describe how well the
+    pointing is known (``starcal``: solved from the stars; ``manual``: entered
+    by hand; ``imu``: orientation sensor; ``prior``: "pointing up, heading
+    unknown"). They are reported in the heartbeat ``status`` so the server
+    and the dashboard can tell a calibrated node from an uncalibrated one.
+    """
+
     source: Literal["static", "bno055"] = "static"
     yaw_deg: float = 0.0
     pitch_deg: float = 45.0
     roll_deg: float = 0.0
     bno055: Bno055Config = field(default_factory=Bno055Config)
+    pointing_source: Optional[Literal["starcal", "manual", "imu", "prior"]] = None
+    pointing_sigma_deg: Optional[float] = None
 
     def validate(self, path: str) -> None:
+        if self.pointing_sigma_deg is not None:
+            _check(0 < self.pointing_sigma_deg <= 180, f"{path}.pointing_sigma_deg", "must be in (0, 180]")
         _check(-360 <= self.yaw_deg <= 360, f"{path}.yaw_deg", "must be in [-360, 360]")
         _check(-90 <= self.pitch_deg <= 90, f"{path}.pitch_deg", "must be in [-90, 90]")
         _check(-180 <= self.roll_deg <= 180, f"{path}.roll_deg", "must be in [-180, 180]")
@@ -455,8 +485,13 @@ class AdsbConfig:
     poll_interval_s: float = 1.0
     max_position_age_s: float = 15.0
     timeout_s: float = 3.0
+    # Decimals of the node position put into an adsbx_v2 URL. Online feeds get
+    # 2 (about 1 km, ample for a 40 nm query) from autoconfig.
+    query_decimals: int = 4
 
     def validate(self, path: str) -> None:
+        _check(0 <= self.query_decimals <= 6, f"{path}.query_decimals", "must be in [0, 6]")
+        _check(self.poll_interval_s > 0, f"{path}.poll_interval_s", "must be > 0")
         if self.source == "dump1090":
             _check(bool(self.url) != bool(self.file_path), path, "dump1090 needs exactly one of url or file_path")
         if self.source == "adsbx_v2":
@@ -482,6 +517,28 @@ class HealthConfig:
 
 
 @dataclass
+class ApplianceConfig:
+    """Hooks for the appliance services (written by ``skynet-edge autoconfig``).
+
+    ``run_dir`` (normally ``/run/skynet``): the node writes ``node.json``
+    (status for the setup page), serves preview snapshots and frame stacks
+    for star calibration there. ``restart_on_change``: files whose change
+    makes the node exit so systemd restarts it with a fresh configuration
+    (credentials, calibration). Both off by default.
+    """
+
+    run_dir: Optional[str] = None
+    restart_on_change: List[str] = field(default_factory=list)
+    preview_width: int = 640
+    preview_interval_s: float = 1.0
+    status_interval_s: float = 5.0
+
+    def validate(self, path: str) -> None:
+        _check(64 <= self.preview_width <= 1920, f"{path}.preview_width", "must be in [64, 1920]")
+        _check(self.preview_interval_s >= 0.2, f"{path}.preview_interval_s", "must be >= 0.2 s")
+
+
+@dataclass
 class EdgeConfig:
     node: NodeConfig = field(default_factory=NodeConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
@@ -496,6 +553,7 @@ class EdgeConfig:
     clips: ClipsConfig = field(default_factory=ClipsConfig)
     adsb: AdsbConfig = field(default_factory=AdsbConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
+    appliance: ApplianceConfig = field(default_factory=ApplianceConfig)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     def validate(self, path: str) -> None:

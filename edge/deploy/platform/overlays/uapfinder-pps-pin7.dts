@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * UAP Finder: GPS PPS input on the Jetson Orin Nano developer kit 40-pin
+ * header, physical pin 7 (GPIO09 / AUD_MCLK, SoC pad soc_gpio59_pac6,
+ * GPIO PAC.06 on the main GPIO controller).
+ *
+ * Device-tree overlay for L4T R36 (JetPack 6). Compiled with
+ *   dtc -@ -I dts -O dtb -o /boot/uapfinder-pps-pin7.dtbo uapfinder-pps-pin7.dts
+ * and applied by UEFI through the OVERLAYS line of the "uapfinder" entry
+ * that configure-overlays.sh writes to /boot/extlinux/extlinux.conf (that
+ * entry also sets FDT to the kernel DTB with __symbols__, which overlays
+ * need). The stock "primary" entry is left untouched as the fallback.
+ *
+ * Kept deliberately small so that a mistake cannot stop the board booting:
+ *  - one new node under "/" (pps-gpio) plus one pin-configuration node under
+ *    the pinmux controller that only the new node references. Nothing that
+ *    already exists is modified; if the pin configuration or the GPIO cannot
+ *    be applied, only the pps-gpio device fails to probe.
+ *  - no cpp includes: the numbers are written out and explained here.
+ *
+ * GPIO specifier: TEGRA234_MAIN_GPIO(AC, 6) = port AC (20) * 8 + 6 = 166
+ * (include/dt-bindings/gpio/tegra234-gpio.h). Flags 0 = GPIO_ACTIVE_HIGH:
+ * the rising edge of the PPS pulse is the "assert" edge.
+ * Pin configuration: nvidia,tristate = 1 (output driver off, input only),
+ * nvidia,enable-input = 1 (input buffer on), nvidia,pull = 0 (none: the GPS
+ * module drives the line push-pull at 3.3 V). nvidia,function is left alone;
+ * requesting the line as a GPIO switches the pad to GPIO mode.
+ *
+ * The 40-pin header is 3.3 V logic: a 5 V PPS output needs a level shifter.
+ *
+ * NOT hardware-tested. Validated at image build time with fdtoverlay
+ * against the BSP's p3767-0005 kernel DTBs (check-overlays.sh), and on the
+ * device before it is enabled (configure-overlays.sh).
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	overlay-name = "UAP Finder GPS PPS on pin 7";
+	jetson-header-name = "Jetson 40pin Header";
+	compatible = "nvidia,p3768-0000+p3767-0000",
+		     "nvidia,p3768-0000+p3767-0001",
+		     "nvidia,p3768-0000+p3767-0003",
+		     "nvidia,p3768-0000+p3767-0004",
+		     "nvidia,p3768-0000+p3767-0005",
+		     "nvidia,p3768-0000+p3767-0000-super",
+		     "nvidia,p3768-0000+p3767-0001-super",
+		     "nvidia,p3768-0000+p3767-0003-super",
+		     "nvidia,p3768-0000+p3767-0004-super",
+		     "nvidia,p3768-0000+p3767-0005-super";
+
+	fragment@0 {
+		target = <&pinmux>;
+		__overlay__ {
+			uapfinder_pps_pin7: uapfinder-pps-pin7 {
+				hdr40-pin7 {
+					nvidia,pins = "soc_gpio59_pac6";
+					nvidia,tristate = <1>;
+					nvidia,enable-input = <1>;
+					nvidia,pull = <0>;
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/";
+		__overlay__ {
+			pps-uapfinder {
+				compatible = "pps-gpio";
+				gpios = <&gpio 166 0>;
+				pinctrl-names = "default";
+				pinctrl-0 = <&uapfinder_pps_pin7>;
+				status = "okay";
+			};
+		};
+	};
+};

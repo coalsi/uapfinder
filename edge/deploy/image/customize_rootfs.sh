@@ -1,97 +1,233 @@
 #!/usr/bin/env bash
-# Customise an L4T sample root filesystem for SKY-NET nodes before flashing.
+# shellcheck source-path=SCRIPTDIR
+# Customise a Jetson Linux R36 root filesystem into the UAP Finder node
+# image, in a chroot (qemu-user-static on an x86_64 host). Called by
+# build-image.sh after apply_binaries.sh and l4t_create_default_user.sh;
+# can be run on its own.
 #
-#   sudo ./customize_rootfs.sh <Linux_for_Tegra/rootfs> <path to the uapfinder repository> [firstboot.env]
+#   sudo customize_rootfs.sh --rootfs DIR --repo DIR --version V --enroll-url URL
+#        [--skip-tailscale] [--skip-readsb] [--test]
 #
-# Runs on an x86_64 Ubuntu host *after* apply_binaries.sh (which installs the
-# NVIDIA L4T packages and the NVIDIA apt source into the rootfs). It chroots
-# into the aarch64 rootfs through qemu-user-static, installs the packages the
-# node needs, copies the software, and installs a one-shot first-boot unit
-# that runs deploy/jetson/setup.sh on the device (udev, gpsd, chrony, PPS
-# detection, Tailscale and the systemd service need the running hardware).
+#   --rootfs DIR      Linux_for_Tegra/rootfs (after apply_binaries.sh)
+#   --repo DIR        a checkout of the uapfinder repository
+#   --version V       the image version (uapfinder-node-V-orin-nano.img.xz)
+#   --enroll-url URL  written to /etc/skynet/defaults.yaml as enroll_url
+#   --test            the rootfs is a plain Ubuntu 22.04 arm64 base, not L4T
+#                     (local tests: skips the NVIDIA checks)
 #
-# firstboot.env (optional) is copied to /etc/skynet/firstboot.env (mode 0600)
-# and sourced by the first-boot unit: SKYNET_NODE_ID, SKYNET_NODE_KEY,
-# SKYNET_SERVER_HOST, TS_AUTHKEY, SKYNET_NVPMODEL ... (see setup.sh). It holds
-# secrets; it is deleted after a successful first boot.
+# Steps (each idempotent, logged, fatal on error):
+#   packages from packages.txt; purge packages-remove.txt; Tailscale from its
+#   apt repository (disabled); readsb built from source (disabled, udev-started);
+#   the repository copied in and edge/deploy/install-node.sh --chroot run
+#   (it installs the node software, users, units and configs, and calls
+#   edge/deploy/platform/install-platform.sh; run here if it did not);
+#   /etc/skynet/defaults.yaml; /etc/uapfinder-release; multi-user target, SSH
+#   off, default user's password locked; caches, SSH host keys and machine-id
+#   removed.
 #
-# NOT executed by the authors: read it, and test the image on one unit first.
+# Environment: UAPF_INSTALL_NODE=<path relative to the repo> replaces
+# edge/deploy/install-node.sh (local tests use tests/stub-install-node.sh).
 set -euo pipefail
 
-die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
-[[ $EUID -eq 0 ]] || die "run as root"
-[[ $# -ge 2 ]] || die "usage: $0 <rootfs> <repo> [firstboot.env]"
-ROOTFS="$(cd "$1" && pwd)"
-REPO="$(cd "$2" && pwd)"
-ENV_FILE="${3:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+. "$SCRIPT_DIR/lib.sh"
+# shellcheck source=versions.env
+. "$SCRIPT_DIR/versions.env"
+
+ROOTFS="" REPO="" VERSION="" ENROLL_URL=""
+SKIP_TAILSCALE=0 SKIP_READSB=0 TEST=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --rootfs) ROOTFS="${2:?}"; shift 2 ;;
+        --repo) REPO="${2:?}"; shift 2 ;;
+        --version) VERSION="${2:?}"; shift 2 ;;
+        --enroll-url) ENROLL_URL="${2-}"; shift 2 ;;
+        --skip-tailscale) SKIP_TAILSCALE=1; shift ;;
+        --skip-readsb) SKIP_READSB=1; shift ;;
+        --test) TEST=1; shift ;;
+        -h | --help) sed -n '3,31p' "$0"; exit 0 ;;
+        *) die "unknown argument: $1" ;;
+    esac
+done
+require_root
+[[ -n "$ROOTFS" && -n "$REPO" && -n "$VERSION" ]] || die "--rootfs, --repo and --version are required"
+ROOTFS="$(cd "$ROOTFS" && pwd)"
+REPO="$(cd "$REPO" && pwd)"
 [[ -x "$ROOTFS/bin/bash" && -d "$ROOTFS/etc/apt" ]] || die "$ROOTFS does not look like a root filesystem"
-[[ -f "$REPO/edge/deploy/jetson/setup.sh" ]] || die "$REPO is not the uapfinder repository"
-[[ -f "$ROOTFS/etc/apt/sources.list.d/nvidia-l4t-apt-source.list" ]] \
-    || die "run Linux_for_Tegra/apply_binaries.sh first (NVIDIA apt source missing)"
-
-# aarch64 binaries run through binfmt_misc + qemu-user-static (fix-binary mode on
-# Ubuntu 22.04 hosts, so no emulator copy inside the rootfs is needed).
-if [[ "$(uname -m)" != aarch64 && ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]]; then
-    die "install qemu-user-static and binfmt-support on the host (apt install qemu-user-static binfmt-support)"
+[[ -f "$REPO/edge/pyproject.toml" && -f "$REPO/docs/NODE_APPLIANCE.md" ]] || die "$REPO is not the uapfinder repository"
+[[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+_-]*$ ]] || die "bad version '$VERSION'"
+if [[ -n "$ENROLL_URL" ]]; then
+    [[ "$ENROLL_URL" =~ ^https?://[^[:space:]\"\']+$ ]] || die "enroll URL '$ENROLL_URL' is not an http(s) URL"
 fi
+if [[ $TEST == 0 ]]; then
+    [[ -f "$ROOTFS/etc/nv_tegra_release" ]] || die "$ROOTFS/etc/nv_tegra_release missing: run apply_binaries.sh first"
+    compgen -G "$ROOTFS/etc/apt/sources.list.d/nvidia-l4t-apt-source.list" >/dev/null \
+        || die "NVIDIA apt source missing in $ROOTFS: run apply_binaries.sh first"
+fi
+INSTALL_NODE_REL="${UAPF_INSTALL_NODE:-edge/deploy/install-node.sh}"
+[[ -f "$REPO/$INSTALL_NODE_REL" ]] \
+    || die "$INSTALL_NODE_REL not found in $REPO (the node installer is required; UAPF_INSTALL_NODE overrides it for tests)"
+require_binfmt
 
-cleanup() {
-    for m in dev/pts dev sys proc; do
-        mountpoint -q "$ROOTFS/$m" && umount -l "$ROOTFS/$m"
+trap chroot_leave EXIT
+chroot_enter "$ROOTFS"
+SRC_IN=/tmp/uapfinder-src
+
+# --- repository ---------------------------------------------------------------------------
+step "copy the repository to $SRC_IN in the rootfs"
+rm -rf "${ROOTFS:?}$SRC_IN"
+install -d "$ROOTFS$SRC_IN"
+tar -C "$REPO" --exclude=.git --exclude=node_modules --exclude=.venv --exclude='*/.venv' \
+    --exclude=__pycache__ --exclude='*.egg-info' --exclude=.pytest_cache --exclude=.next \
+    --exclude='*.img' --exclude='*.img.xz' -cf - . | tar -C "$ROOTFS$SRC_IN" -xf -
+IMG_IN="$SRC_IN/edge/deploy/image"
+
+# --- packages -------------------------------------------------------------------------------
+step "apt: update and install packages.txt"
+in_chroot apt-get update
+in_chroot apt-get -y -f install
+mapfile -t PKGS < <(read_list "$SCRIPT_DIR/packages.txt")
+in_chroot apt-get install -y --no-install-recommends "${PKGS[@]}"
+
+step "purge desktop and unwanted packages (packages-remove.txt)"
+# shellcheck disable=SC2016  # dpkg-query format, not shell
+mapfile -t INSTALLED < <(in_chroot dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' | awk '$1 ~ /^.i/ {print $2}')
+PURGE=()
+while IFS= read -r pat; do
+    for p in "${INSTALLED[@]}"; do
+        # shellcheck disable=SC2053  # glob match on purpose
+        [[ "$p" == $pat ]] && PURGE+=("$p")
     done
-    if [[ -f "$ROOTFS/etc/resolv.conf.skynet-orig" ]]; then
-        mv -f "$ROOTFS/etc/resolv.conf.skynet-orig" "$ROOTFS/etc/resolv.conf"
+done < <(read_list "$SCRIPT_DIR/packages-remove.txt")
+if [[ ${#PURGE[@]} -gt 0 ]]; then
+    SAFE=()
+    for p in "${PURGE[@]}"; do
+        if in_chroot apt-get -s purge "$p" | grep -E '^(Remv|Purg) nvidia-l4t-' >/dev/null; then
+            warn "keeping $p: removing it would remove NVIDIA L4T packages"
+        else
+            SAFE+=("$p")
+        fi
+    done
+    if [[ ${#SAFE[@]} -gt 0 ]]; then
+        log "purging: ${SAFE[*]}"
+        in_chroot apt-get purge -y "${SAFE[@]}"
     fi
-}
-trap cleanup EXIT
-mount -t proc proc "$ROOTFS/proc"
-mount -t sysfs sys "$ROOTFS/sys"
-mount --bind /dev "$ROOTFS/dev"
-mount --bind /dev/pts "$ROOTFS/dev/pts"
-if [[ -e "$ROOTFS/etc/resolv.conf" || -L "$ROOTFS/etc/resolv.conf" ]]; then
-    mv "$ROOTFS/etc/resolv.conf" "$ROOTFS/etc/resolv.conf.skynet-orig"
+else
+    log "nothing to purge"
 fi
-cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
 
-echo "[image] installing packages in the chroot"
-chroot "$ROOTFS" /usr/bin/env DEBIAN_FRONTEND=noninteractive bash -euo pipefail -c '
-    apt-get update
-    apt-get install -y --no-install-recommends \
-        python3-venv python3-pip python3-numpy python3-yaml python3-requests \
-        gpsd gpsd-clients chrony pps-tools ffmpeg gstreamer1.0-tools i2c-tools rsync curl ca-certificates
-    # JetPack OpenCV (GStreamer-enabled); Ubuntu python3-opencv as a fallback.
-    apt-get install -y nvidia-opencv || apt-get install -y python3-opencv
-    apt-get clean
-'
+if [[ $SKIP_TAILSCALE == 0 ]]; then
+    step "Tailscale (official apt repository, disabled until enrollment)"
+    in_chroot bash "$IMG_IN/install-tailscale.sh"
+else
+    warn "skipping Tailscale (--skip-tailscale)"
+fi
 
-echo "[image] copying the software"
-install -d "$ROOTFS/opt/skynet"
-rsync -a --delete --exclude .git --exclude .venv --exclude node_modules --exclude __pycache__ \
-    --exclude '*.egg-info' "$REPO/common" "$REPO/edge" "$ROOTFS/opt/skynet/bootstrap/"
+if [[ $SKIP_READSB == 0 ]]; then
+    step "readsb $READSB_TAG (built from source, disabled until a receiver is present)"
+    # shellcheck disable=SC2016  # dpkg-query format, not shell
+    if ! in_chroot dpkg-query -W -f '${Version}' readsb 2>/dev/null | grep -q "^${READSB_TAG#v}"; then
+        rm -rf "$ROOTFS/tmp/readsb-src"
+        git clone --quiet --depth 1 --branch "$READSB_TAG" "$READSB_REPO" "$ROOTFS/tmp/readsb-src"
+        got="$(git -C "$ROOTFS/tmp/readsb-src" rev-parse HEAD)"
+        [[ "$got" == "$READSB_COMMIT" ]] || die "readsb $READSB_TAG is commit $got, expected $READSB_COMMIT"
+        rm -rf "$ROOTFS/tmp/readsb-src/.git"
+    fi
+    in_chroot bash "$IMG_IN/install-readsb.sh" --src /tmp/readsb-src
+    rm -rf "$ROOTFS/tmp/readsb-src"
+else
+    warn "skipping readsb (--skip-readsb)"
+fi
+
+# --- the node software --------------------------------------------------------------------------
+step "node software: $INSTALL_NODE_REL --chroot"
+export UAPF_ENROLL_URL="$ENROLL_URL"
+[[ $SKIP_TAILSCALE == 0 ]] || export SKYNET_SKIP_TAILSCALE=1
+in_chroot bash "$SRC_IN/$INSTALL_NODE_REL" --chroot
+if [[ ! -x "$ROOTFS/usr/lib/uapfinder/platform/configure-overlays.sh" ]]; then
+    step "platform: install-platform.sh --chroot (install-node.sh did not run it)"
+    in_chroot bash "$SRC_IN/edge/deploy/platform/install-platform.sh" --chroot
+fi
+
+# --- image defaults ---------------------------------------------------------------------------------
+step "/etc/skynet/defaults.yaml"
 install -d -m 0755 "$ROOTFS/etc/skynet"
-if [[ -n "$ENV_FILE" ]]; then
-    install -m 0600 "$ENV_FILE" "$ROOTFS/etc/skynet/firstboot.env"
+DEFAULTS="$ROOTFS/etc/skynet/defaults.yaml"
+if [[ -z "$ENROLL_URL" ]]; then
+    warn "no enroll URL given: enroll_url stays as install-node.sh wrote it (if at all)"
+elif [[ -f "$DEFAULTS" ]] && grep -qE '^enroll_url:' "$DEFAULTS"; then
+    sed -i -E "s#^enroll_url:.*#enroll_url: \"${ENROLL_URL}\"#" "$DEFAULTS"
+else
+    if [[ ! -f "$DEFAULTS" ]]; then
+        printf '# Image defaults (docs/NODE_APPLIANCE.md). The setup page'"'"'s advanced section can change them.\n' >"$DEFAULTS"
+    fi
+    printf 'enroll_url: "%s"\n' "$ENROLL_URL" >>"$DEFAULTS"
+fi
+chmod 0644 "$DEFAULTS"
+grep -E '^enroll_url:' "$DEFAULTS" || warn "defaults.yaml has no enroll_url"
+
+GIT_REV="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
+cat >"$ROOTFS/etc/uapfinder-release" <<EOF
+# UAP Finder node image (edge/deploy/image/build-image.sh)
+UAPF_IMAGE_VERSION=$VERSION
+UAPF_IMAGE_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+UAPF_GIT_COMMIT=$GIT_REV
+L4T_VERSION=$L4T_VERSION
+JETPACK_VERSION=$JETPACK_VERSION
+EOF
+
+# --- system settings --------------------------------------------------------------------------------
+step "system settings: headless target, SSH off until the device password is set"
+in_chroot systemctl set-default multi-user.target
+for u in ssh.service ssh.socket; do in_chroot systemctl disable "$u" >/dev/null 2>&1 || true; done
+# The image carries no SSH host keys; make sure they exist whenever sshd starts.
+install -d "$ROOTFS/etc/systemd/system/ssh.service.d"
+cat >"$ROOTFS/etc/systemd/system/ssh.service.d/10-uapfinder-hostkeys.conf" <<'EOF'
+# Written by edge/deploy/image/customize_rootfs.sh: the image has no SSH host
+# keys (each card gets its own); create any that are missing before sshd starts.
+[Service]
+ExecStartPre=/usr/bin/ssh-keygen -A
+EOF
+# NVIDIA's own first-boot root-partition resize (nvresizefs, R36) and the
+# node's first-boot resize must not run at the same time: order ours after.
+install -d "$ROOTFS/etc/systemd/system/uapfinder-firstboot.service.d"
+cat >"$ROOTFS/etc/systemd/system/uapfinder-firstboot.service.d/10-after-nvidia-firstboot.conf" <<'EOF'
+# Written by edge/deploy/image/customize_rootfs.sh. NVIDIA's L4T first-boot
+# units (root file system resize, configuration) finish before the node's
+# first-boot service grows the partition again (a no-op if already grown).
+# Units that do not exist are ignored by systemd.
+[Unit]
+After=nvresizefs.service nv-oem-config.service nvfb-early.service nvfb.service uapfinder-overlays.service
+EOF
+
+if in_chroot getent passwd "$DEFAULT_USER" >/dev/null; then
+    in_chroot passwd -l "$DEFAULT_USER" >/dev/null
+    log "default account $DEFAULT_USER: password locked (set from the setup page)"
+else
+    die "default account $DEFAULT_USER does not exist (l4t_create_default_user.sh should have created it)"
 fi
 
-echo "[image] installing the first-boot unit"
-cat > "$ROOTFS/etc/systemd/system/skynet-firstboot.service" <<'EOF'
-[Unit]
-Description=SKY-NET first-boot provisioning (runs deploy/jetson/setup.sh once)
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=!/var/lib/skynet/.provisioned
+# --- clean up ---------------------------------------------------------------------------------------
+step "clean up: build dependencies, caches, host keys, machine-id"
+in_chroot apt-get -y autoremove --purge
+in_chroot apt-get clean
+rm -rf "${ROOTFS:?}$SRC_IN"
+rm -rf "$ROOTFS"/var/lib/apt/lists/* "$ROOTFS"/var/cache/apt/*.bin "$ROOTFS"/var/cache/debconf/*-old \
+    "$ROOTFS"/root/.cache "$ROOTFS"/root/.bash_history "$ROOTFS"/tmp/* "$ROOTFS"/var/tmp/*
+find "$ROOTFS/var/log" -type f \( -name '*.gz' -o -name '*.[0-9]' -o -name '*.old' \) -delete
+find "$ROOTFS/var/log" -type f -exec truncate -s 0 {} +
+# Documentation except the copyright files (licences stay with the binaries).
+find "$ROOTFS/usr/share/doc" -mindepth 2 ! -name copyright ! -type d -delete 2>/dev/null || true
+find "$ROOTFS/usr/share/doc" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+rm -f "$ROOTFS"/etc/ssh/ssh_host_*
+: >"$ROOTFS/etc/machine-id"
+rm -f "$ROOTFS/var/lib/dbus/machine-id"
+ln -sf /etc/machine-id "$ROOTFS/var/lib/dbus/machine-id" 2>/dev/null || true
+for q in "$ROOTFS"/usr/bin/qemu-aarch64-static "$ROOTFS"/usr/bin/qemu-aarch64; do
+    if [[ -e "$q" ]] && ! in_chroot dpkg -S "${q#"$ROOTFS"}" >/dev/null 2>&1; then rm -f "$q"; fi
+done
 
-[Service]
-Type=oneshot
-EnvironmentFile=-/etc/skynet/firstboot.env
-Environment=SKYNET_SKIP_APT=1
-ExecStart=/opt/skynet/bootstrap/edge/deploy/jetson/setup.sh
-ExecStartPost=/bin/sh -c 'touch /var/lib/skynet/.provisioned && rm -f /etc/skynet/firstboot.env'
-TimeoutStartSec=1800
-
-[Install]
-WantedBy=multi-user.target
-EOF
-ln -sf /etc/systemd/system/skynet-firstboot.service \
-    "$ROOTFS/etc/systemd/system/multi-user.target.wants/skynet-firstboot.service"
-echo "[image] done: create the default user (tools/l4t_create_default_user.sh) and flash (see README.md)"
+chroot_leave
+trap - EXIT
+log "rootfs customised: $(du -sh --exclude=proc --exclude=sys "$ROOTFS" 2>/dev/null | cut -f1) in $ROOTFS"

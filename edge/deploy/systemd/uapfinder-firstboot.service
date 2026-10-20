@@ -1,0 +1,23 @@
+# UAP Finder node: first-boot preparation (grow the root file system, host name
+# uapfinder-XXXX, new SSH host keys) and, at every boot, formatting a blank NVMe
+# drive for /var/lib/skynet. Installed by edge/deploy/install-node.sh.
+# NOT tested on Jetson hardware.
+[Unit]
+Description=UAP Finder first-boot setup and data drive
+Documentation=file:///opt/skynet/src/docs/NODE_APPLIANCE.md
+# NVIDIA's own first-boot resize (nvresizefs, run from nv-oem-config on L4T) must
+# finish first; growpart then finds nothing left to do. After= on units that do
+# not exist is harmless.
+After=local-fs.target systemd-remount-fs.service nvresizefs.service nv-oem-config.service nvfb-early.service
+Before=NetworkManager.service avahi-daemon.service ssh.service gpsd.service skynet-edge.service uapfinder-setup.service uapfinder-netsetup.service uapfinder-starcal.service
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/skynet/bin/uapfinder-firstboot
+TimeoutStartSec=20min
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

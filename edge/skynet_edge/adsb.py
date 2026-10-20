@@ -36,6 +36,7 @@ import requests
 
 from skynet_common.geodesy import EARTH_MEAN_RADIUS_M, look_angles
 
+from . import __version__
 from .config import AdsbConfig
 
 log = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ log = logging.getLogger(__name__)
 FT_TO_M = 0.3048
 KT_TO_MPS = 1852.0 / 3600.0
 FPM_TO_MPS = FT_TO_M / 60.0
+USER_AGENT = f"uapfinder-node/{__version__} (+https://github.com/coalsi/uapfinder)"
 
 
 @dataclass(frozen=True)
@@ -142,6 +144,7 @@ class AdsbFeed:
         self._session = requests.Session()
         self.errors = 0
         self.last_ok_ns = 0
+        self._backoff_until = 0.0
 
     @property
     def enabled(self) -> bool:
@@ -172,13 +175,21 @@ class AdsbFeed:
             pos = self._position()
             if pos is None:
                 return None
-            url = url.format(lat=f"{pos[0]:.4f}", lon=f"{pos[1]:.4f}", dist=f"{cfg.radius_nm:.0f}")
+            d = cfg.query_decimals
+            url = url.format(lat=f"{pos[0]:.{d}f}", lon=f"{pos[1]:.{d}f}", dist=f"{cfg.radius_nm:.0f}")
         headers = {cfg.api_key_header: cfg.api_key} if cfg.api_key else {}
+        headers["User-Agent"] = USER_AGENT
         resp = self._session.get(url, headers=headers, timeout=cfg.timeout_s)
+        if resp.status_code == 429:
+            # Polite to free community feeds: honour Retry-After, else back off 60 s.
+            retry = resp.headers.get("Retry-After", "")
+            self._backoff_until = time.monotonic() + (float(retry) if retry.isdigit() else 60.0)
         resp.raise_for_status()
         return resp.json()
 
     def poll_once(self) -> None:
+        if time.monotonic() < self._backoff_until:
+            return
         try:
             data = self._fetch()
             if data is None:

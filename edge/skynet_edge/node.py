@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from skynet_common.protocol import MAX_DATAGRAM_BYTES, encode_signed
 
-from . import messages
+from . import __version__, messages
 from .adsb import AdsbFeed
 from .capture import CaptureThread, FrameQueue, FrameRef, FrameSource, make_source
 from .clips import ClipManager, safe_name
@@ -84,6 +84,20 @@ class EdgeNode:
         self._chrony: Optional[Dict[str, Any]] = None
         self._health_thread: Optional[threading.Thread] = None
         self._warned_no_fix = 0.0
+        self.heartbeats_sent = 0
+        self.last_heartbeat_ns = 0
+        self.restart_requested = False
+        app = cfg.appliance
+        self.tap = None
+        if app.run_dir:
+            from .appliance.tap import FrameTap
+
+            self.tap = FrameTap(app.run_dir, app.preview_width, app.preview_interval_s)
+        self.watcher = None
+        if app.restart_on_change:
+            from .appliance.tap import ChangeWatcher
+
+            self.watcher = ChangeWatcher(app.restart_on_change)
 
     # --- lifecycle ------------------------------------------------------------
 
@@ -167,6 +181,8 @@ class EdgeNode:
         observer = None if fix is None else (fix.latitude, fix.longitude, fix.altitude_m)
         aircraft = self.adsb.aircraft(ref.t_ns) if self.adsb.enabled else []
         res = self.pipeline.process(y, ref.t_ns, att, observer, aircraft)
+        if self.tap is not None:
+            self.tap.offer(y, ref.t_ns)
         for r in res.reports:
             if fix is None:
                 self.counters["no_fix"] += 1
@@ -223,6 +239,11 @@ class EdgeNode:
         st.update(self.gps.status())
         st.update(self.attitude.status())
         st.update(self.adsb.status())
+        a = self.cfg.attitude
+        if a.pointing_source is not None:
+            st["pointing"] = a.pointing_source
+        if a.pointing_sigma_deg is not None:
+            st["pointing_sigma_deg"] = a.pointing_sigma_deg
         if self._chrony:
             st.update(self._chrony)
         return st
@@ -240,6 +261,40 @@ class EdgeNode:
             msg["status"].pop(key, None)
         return msg
 
+    def appliance_status(self) -> Dict[str, Any]:
+        """``node.json`` for the setup page (docs/NODE_APPLIANCE.md)."""
+        import os
+
+        fix = self.gps.current()
+        att = self.attitude.attitude()
+        a = self.cfg.attitude
+        return {
+            "pid": os.getpid(), "mode": "running", "t_ns": time.time_ns(), "node_id": self.node_id,
+            "software_version": __version__,
+            "fix": None if fix is None else {"latitude": round(fix.latitude, 6), "longitude": round(fix.longitude, 6),
+                                             "altitude_m": round(fix.altitude_m, 1), "mode": fix.mode,
+                                             "source": fix.source, "t_ns": fix.t_ns},
+            "attitude": {"yaw_deg": round(att.yaw_deg, 2), "pitch_deg": round(att.pitch_deg, 2),
+                         "roll_deg": round(att.roll_deg, 2)},
+            "attitude_source": a.source, "pointing_source": a.pointing_source,
+            "pointing_sigma_deg": a.pointing_sigma_deg,
+            "camera": {"width": self.cam.width, "height": self.cam.height, "fov_h_deg": round(self.cam.fov_h_deg, 3),
+                       "fov_v_deg": round(self.cam.fov_v_deg, 3), "source": self.cfg.camera.source,
+                       "opened": self.capture.opened.is_set() and self.capture.error is None},
+            "server": {"transport": self.uplink.transport, "heartbeats_sent": self.heartbeats_sent,
+                       "last_heartbeat_ns": self.last_heartbeat_ns},
+            "counters": dict(self.counters),
+            "status": self.status(),
+        }
+
+    def _write_status_file(self) -> None:
+        from .appliance.tap import write_node_status
+
+        try:
+            write_node_status(str(self.cfg.appliance.run_dir), self.appliance_status())
+        except Exception as exc:  # noqa: BLE001 - status reporting must never stop the node
+            log.debug("node status file: %s", exc)
+
     def _healthy(self) -> bool:
         now = time.monotonic()
         if self._last_proc:
@@ -248,9 +303,16 @@ class EdgeNode:
 
     def _health_loop(self) -> None:
         h = self.cfg.health
-        next_hb = next_log = next_chrony = time.monotonic()
+        next_hb = next_log = next_chrony = next_file = time.monotonic()
         while not self.stop_event.is_set():
             now = time.monotonic()
+            if self.watcher is not None and self.watcher.changed():
+                log.info("credentials or calibration changed: restarting to load the new configuration")
+                self.restart_requested = True
+                self.stop()
+            if self.cfg.appliance.run_dir and now >= next_file:
+                self._write_status_file()
+                next_file = now + self.cfg.appliance.status_interval_s
             if h.watchdog and self._healthy():
                 self.notifier.watchdog()
             if h.chrony_offset and now >= next_chrony:
@@ -259,7 +321,9 @@ class EdgeNode:
             if now >= next_hb and (self._last_proc or self.capture.opened.is_set()):
                 msg = self.heartbeat_message()
                 if msg is not None:
-                    self.uplink.send(msg)
+                    if self.uplink.send(msg):
+                        self.heartbeats_sent += 1
+                        self.last_heartbeat_ns = self._clock()
                 elif now - self._warned_no_fix > 60.0:
                     self._warned_no_fix = now
                     log.warning("no GPS fix and no gps.static position: not sending heartbeats or telemetry")

@@ -1,0 +1,32 @@
+# UAP Finder node: automatic pointing calibration from the stars. Started every
+# 30 min by uapfinder-starcal.timer; exits at once unless it is dark, there is a
+# GPS fix and the calibration is missing or older than 7 days.
+[Unit]
+Description=UAP Finder star calibration
+Documentation=file:///opt/skynet/src/docs/NODE_APPLIANCE.md
+After=skynet-edge.service gpsd.service
+
+[Service]
+Type=oneshot
+User=skynet
+Group=skynet
+ExecStart=/opt/skynet/venv/bin/skynet-edge starcal
+Environment=PYTHONUNBUFFERED=1
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=15min
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/skynet /run/skynet
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0027
+MemoryMax=2G

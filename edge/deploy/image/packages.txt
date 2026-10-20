@@ -1,0 +1,65 @@
+# Ubuntu 22.04 packages added to the image (on top of NVIDIA's minimal root
+# filesystem and the L4T packages from apply_binaries.sh). One per line.
+# edge/deploy/install-node.sh installs what the node software itself needs;
+# overlaps are harmless.
+
+# networking: wired/Wi-Fi/hotspot, mDNS (uapfinder.local), SSH (disabled until
+# the device password is set)
+network-manager
+wpasupplicant
+dnsmasq-base
+iw
+wireless-regdb
+avahi-daemon
+libnss-mdns
+openssh-server
+ca-certificates
+curl
+gnupg
+
+# time and GPS
+chrony
+gpsd
+gpsd-clients
+pps-tools
+
+# camera, video, sensors
+ffmpeg
+gstreamer1.0-tools
+v4l-utils
+i2c-tools
+gpiod
+
+# node software runtime (Python venv with system site packages)
+python3
+python3-venv
+python3-pip
+python3-numpy
+python3-yaml
+python3-requests
+
+# storage (first-boot root resize, NVMe formatting)
+cloud-guest-utils
+e2fsprogs
+parted
+gdisk
+nvme-cli
+
+# ADS-B receiver runtime (readsb is built from source; librtlsdr0 is its runtime)
+librtlsdr0
+libusb-1.0-0
+libncurses6
+libzstd1
+zlib1g
+
+# device-tree overlays (fdtoverlay/fdtget at boot) and kernel module tooling
+device-tree-compiler
+kmod
+
+# admin basics
+sudo
+less
+nano
+rsync
+usbutils
+pciutils

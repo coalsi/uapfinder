@@ -47,6 +47,7 @@ from .state import create_state
 from .state.base import EVENT_ID_RE
 from .stats import Stats, prometheus_text
 from .storage import LocalStorage, StorageError, create_storage
+from . import enrollment as enr
 from .volunteers import MAX_BODY_BYTES, MIN_CELL_COUNT, RATE_WINDOW_S, VolunteerIn, is_honeypot, to_csv, to_json_row
 
 log = logging.getLogger("skynet.app")
@@ -629,6 +630,74 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if not await require_db().delete_volunteer(volunteer_id):
             raise HTTPException(404, "unknown volunteer")
         return Response(status_code=204)
+
+    # --- enrollment (claim codes) ------------------------------------------------------
+
+    def enroll_db() -> Database:
+        if rt.db is None:
+            raise HTTPException(503, "enrollment unavailable (the server has no database)")
+        return rt.db
+
+    @api.post("/enrollments", status_code=201)
+    async def create_enrollments(request: Request) -> Dict[str, Any]:
+        require_admin(request)
+        db = enroll_db()
+        raw = await read_body(request, 4096)
+        try:
+            body = enr.EnrollmentsIn.model_validate_json(raw or b"{}")
+        except ValidationError as exc:
+            raise _validation_error(exc) from None
+        now = time.time_ns()
+        expires = now + int(body.expires_in_h * _HOUR_NS)
+        made: List[str] = []
+        for _ in range(10):  # collisions in a 2^40 space are rare; retry the missing ones
+            want = body.count - len(made)
+            if want <= 0:
+                break
+            made += await db.insert_enrollment_codes([enr.new_code() for _ in range(want)], body.label, now, expires)
+        if len(made) < body.count:
+            raise HTTPException(500, "could not create unique codes")
+        log.info("created %d enrollment code(s) (label %r)", len(made), body.label)
+        return {"codes": [{"code": enr.format_code(c), "expires_ns": expires} for c in made]}
+
+    @api.get("/enrollments")
+    async def list_enrollments(request: Request) -> Dict[str, Any]:
+        require_admin(request)
+        rows = await enroll_db().list_enrollment_codes()
+        for r in rows:
+            r["code"] = enr.format_code(r["code"])
+        return {"codes": rows}
+
+    @api.post("/enroll", status_code=201)
+    async def enroll_node(request: Request) -> Dict[str, Any]:
+        db = enroll_db()
+        if not await state.rate_limit("enr:" + client_ip(request), settings.enroll_rate_per_hour,
+                                      enr.RATE_WINDOW_S):
+            raise HTTPException(429, "too many enrollment attempts from this address; try again later")
+        if settings.master_key is None:
+            raise HTTPException(503, "server has no master key configured (SKYNET_MASTER_KEY)")
+        raw = await read_body(request, enr.MAX_BODY_BYTES)
+        try:
+            body = enr.EnrollIn.model_validate_json(raw or b"{}")
+        except ValidationError as exc:
+            raise _validation_error(exc) from None
+        code = enr.normalize_code(body.code)
+        if code is None:
+            raise HTTPException(404, "unknown claim code")
+        node_id = str(uuid.uuid4())
+        now = time.time_ns()
+        claim = await db.claim_enrollment_code(code, now, node_id, body.hardware.model_dump())
+        if claim["status"] == "unknown":
+            raise HTTPException(404, "unknown claim code")
+        if claim["status"] != "ok":
+            raise HTTPException(410, f"claim code already {'used' if claim['status'] == 'used' else 'expired'}")
+        node, _ = await state.register_node(node_id, enr.node_label(claim.get("label"), body.hardware), now)
+        await engine.emit([{"type": "node", "t_ns": now, "data": engine.public_node(node)}])
+        await engine.persist(DbBatch(nodes={node_id: node}))
+        log.info("enrolled node %s with code %s-**** (%s)", node_id, code[:4], body.hardware.model or "?")
+        return {"node_id": node_id, "node_key": engine.decoder.node_key(node_id).hex(),
+                **enr.connection_info(settings, request.url.hostname, base_url(request)),
+                "tailscale": enr.tailscale_block(settings)}
 
     app.include_router(api)
     return app
