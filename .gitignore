@@ -23,6 +23,8 @@ dashboard/dist/
 *.env
 .env*
 !.env.example
+# Pinned build inputs, not secrets
+!edge/deploy/image/versions.env
 /data/
 /clips/
 *.y4m
