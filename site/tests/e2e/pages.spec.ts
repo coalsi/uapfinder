@@ -25,6 +25,14 @@ test.describe("pages @screenshots", () => {
         await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex");
       }
 
+      // IDs are unique (aria-labelledby on diagrams depends on it).
+      const dupes = await page.$$eval("[id]", (els) => {
+        const seen = new Map<string, number>();
+        for (const e of els) seen.set(e.id, (seen.get(e.id) ?? 0) + 1);
+        return [...seen].filter(([, n]) => n > 1).map(([id]) => id);
+      });
+      expect(dupes, "duplicate ids").toEqual([]);
+
       // Every informative SVG has an accessible name; decorative ones are hidden.
       const unnamed = await page.$$eval("svg", (svgs) =>
         svgs.filter((s) => s.getAttribute("aria-hidden") !== "true" && !s.closest("[aria-hidden=true]") && !(s.getAttribute("role") === "img" && (s.getAttribute("aria-labelledby") || s.getAttribute("aria-label")))).length,

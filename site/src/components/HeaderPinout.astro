@@ -1,0 +1,310 @@
+---
+/**
+ * Wiring of the GPS module (and the optional BNO055) to the Jetson Orin Nano
+ * developer kit's 40-pin header, with exactly the pins of docs/NODE_APPLIANCE.md.
+ * Physical pin numbers: odd pins in one row, even pins in the other, pin 1
+ * marked on the board. Only pins 1–14 are drawn; 15–40 stay free.
+ */
+interface Pin {
+  n: number;
+  name: string;
+  to?: string;
+  color?: string;
+}
+const C = {
+  v33: "#ffcb6b",
+  v5: "#ff9a9a",
+  gnd: "#b6c2d6",
+  tx: "#8fd0ff",
+  rx: "#7fe3ae",
+  pps: "#ffd27a",
+  i2c: "#d0a3ff",
+};
+const pins: Pin[] = [
+  { n: 1, name: "3.3 V", to: "BNO055 VIN", color: C.v33 },
+  { n: 2, name: "5 V", to: "GPS VIN", color: C.v5 },
+  { n: 3, name: "SDA", to: "BNO055 SDA", color: C.i2c },
+  { n: 4, name: "5 V" },
+  { n: 5, name: "SCL", to: "BNO055 SCL", color: C.i2c },
+  { n: 6, name: "GND", to: "GPS GND", color: C.gnd },
+  { n: 7, name: "PPS in", to: "GPS PPS", color: C.pps },
+  { n: 8, name: "TX", to: "GPS RX", color: C.tx },
+  { n: 9, name: "GND", to: "BNO055 GND", color: C.gnd },
+  { n: 10, name: "RX", to: "GPS TX", color: C.rx },
+  { n: 11, name: "" },
+  { n: 12, name: "" },
+  { n: 13, name: "" },
+  { n: 14, name: "GND" },
+];
+const X_ODD = 230;
+const X_EVEN = 290;
+const Y0 = 76;
+const STEP = 46;
+const R = 15;
+const rowY = (n: number) => Y0 + STEP * Math.floor((n - 1) / 2);
+const pinX = (n: number) => (n % 2 ? X_ODD : X_EVEN);
+
+const GPS_X = 398;
+const BNO_X = 122; // right edge of the BNO055 box
+const gpsPins: [string, number, string][] = [
+  ["VIN", rowY(2), C.v5],
+  ["GND", rowY(6), C.gnd],
+  ["RX", rowY(8), C.tx],
+  ["TX", rowY(10), C.rx],
+  ["PPS", rowY(10) + STEP, C.pps],
+];
+const bnoPins: [string, number, string][] = [
+  ["VIN", rowY(1), C.v33],
+  ["SDA", rowY(3), C.i2c],
+  ["SCL", rowY(5), C.i2c],
+  ["GND", rowY(9), C.gnd],
+];
+const ppsY = rowY(10) + STEP;
+const bottom = rowY(13) + 70;
+const ppsPath = `M${X_ODD} ${rowY(7)} H${(X_ODD + X_EVEN) / 2} V${bottom - 18} H${GPS_X - 24} V${ppsY} H${GPS_X}`;
+---
+<figure class="diagram pinout">
+  <svg viewBox="0 0 520 500" role="img" aria-labelledby="pinout-title pinout-desc">
+    <title id="pinout-title">Wiring the GPS module and optional orientation sensor to the 40-pin header</title>
+    <desc id="pinout-desc">
+      The top of the Jetson's 40-pin header, pins 1 to 14, odd pins in the left column and even pins in the right,
+      pin 1 at the top left. The GPS module on the right connects: VIN to pin 2 (5 volts) or pin 1 (3.3 volts),
+      depending on the module; GND to pin 6; its RX to pin 8, the Jetson's UART transmit; its TX to pin 10, the
+      Jetson's UART receive; and its PPS output to pin 7. The optional BNO055 orientation sensor on the left connects
+      VIN to pin 1 (3.3 volts), SDA to pin 3, SCL to pin 5 and GND to pin 9. Pins 15 to 40 are not used.
+    </desc>
+
+    <!-- header body -->
+    <rect x={X_ODD - 30} y={Y0 - 32} width={X_EVEN - X_ODD + 60} height={bottom - Y0 + 4} rx="8" fill="#0b1220" stroke="#6f7f9e"></rect>
+    <text class="p-cap" x={(X_ODD + X_EVEN) / 2} y={bottom + 54} text-anchor="middle">40-pin header</text>
+
+    <!-- wires (drawn under the pins) -->
+    {
+      pins
+        .filter((p) => p.to?.startsWith("GPS") && p.n !== 7)
+        .map((p) => {
+          const target = gpsPins.find(([name]) => p.to === `GPS ${name}`)!;
+          return <path d={`M${pinX(p.n)} ${rowY(p.n)} H${GPS_X - 40} V${target[1]} H${GPS_X}`} stroke={p.color} stroke-width="3.2" fill="none" stroke-linejoin="round" />;
+        })
+    }
+    {
+      pins
+        .filter((p) => p.to?.startsWith("BNO055"))
+        .map((p) => {
+          const target = bnoPins.find(([name]) => p.to === `BNO055 ${name}`)!;
+          return <path d={`M${pinX(p.n)} ${rowY(p.n)} H${BNO_X + 34} V${target[1]} H${BNO_X}`} stroke={p.color} stroke-width="3.2" fill="none" stroke-dasharray="9 5" stroke-linejoin="round" />;
+        })
+    }
+    <path d={ppsPath} stroke="#0b1220" stroke-width="7" fill="none" stroke-linejoin="round"></path>
+    <path d={ppsPath} stroke={C.pps} stroke-width="3.2" fill="none" stroke-linejoin="round"></path>
+
+    <!-- pins -->
+    {
+      pins.map((p) => (
+        <g class={p.to ? "p-pin p-pin--used" : "p-pin"}>
+          {p.n === 1 ? (
+            <rect x={pinX(p.n) - R} y={rowY(p.n) - R} width={2 * R} height={2 * R} rx="3" stroke={p.color} />
+          ) : (
+            <circle cx={pinX(p.n)} cy={rowY(p.n)} r={R} stroke={p.color ?? "#3a4a6b"} />
+          )}
+          <text x={pinX(p.n)} y={rowY(p.n) + 5} text-anchor="middle">
+            {p.n}
+          </text>
+        </g>
+      ))
+    }
+    <!-- pin function labels, just above each wire -->
+    {
+      pins
+        .filter((p) => p.name && p.to)
+        .map((p) => (
+          <text
+            class="p-fn"
+            x={p.n % 2 ? X_ODD - 22 : X_EVEN + 22}
+            y={rowY(p.n) - 8}
+            text-anchor={p.n % 2 ? "end" : "start"}
+          >
+            {p.name}
+          </text>
+        ))
+    }
+    <text class="p-faint" x={(X_ODD + X_EVEN) / 2} y={bottom - 30} text-anchor="middle">⋮</text>
+    <text class="p-faint p-small" x={(X_ODD + X_EVEN) / 2} y={bottom + 28} text-anchor="middle">pins 15–40 not used</text>
+    <text class="p-pin1" x={X_ODD - 22} y={Y0 - 38} text-anchor="middle">pin 1</text>
+
+    <!-- GPS module -->
+    <rect x={GPS_X} y={Y0 - 32} width="112" height={ppsY - Y0 + 66} rx="8" fill="#0f2a20" stroke="#7fe3ae"></rect>
+    <text class="p-module" x={GPS_X + 56} y={Y0 - 40} text-anchor="middle">GPS module</text>
+    {
+      gpsPins.map(([name, y, color]) => (
+        <g>
+          <circle cx={GPS_X} cy={y} r="5" fill={color} />
+          <text class="p-mod-pin" x={GPS_X + 14} y={y + 6}>
+            {name}
+          </text>
+        </g>
+      ))
+    }
+    <!-- BNO055 -->
+    <rect x="8" y={Y0 - 32} width={BNO_X - 8} height={rowY(9) - Y0 + 64} rx="8" fill="#1d1430" stroke="#d0a3ff" stroke-dasharray="6 4"></rect>
+    <text class="p-module" x={(8 + BNO_X) / 2} y={Y0 - 40} text-anchor="middle">BNO055</text>
+    <text class="p-faint p-small" x={(8 + BNO_X) / 2} y={rowY(9) + 56} text-anchor="middle">optional</text>
+    {
+      bnoPins.map(([name, y, color]) => (
+        <g>
+          <circle cx={BNO_X} cy={y} r="5" fill={color} />
+          <text class="p-mod-pin" x={BNO_X - 14} y={y + 6} text-anchor="end">
+            {name}
+          </text>
+        </g>
+      ))
+    }
+  </svg>
+  <figcaption>
+    Schematic of the header as numbered on the board, not its physical orientation: find the pin 1 mark on your
+    board before wiring. Dashed wires are optional. TX goes to RX and RX to TX.
+  </figcaption>
+</figure>
+
+<div class="table-wrap" tabindex="0" role="region" aria-labelledby="pin-caption">
+  <table class="table-stack pin-table">
+    <caption id="pin-caption">40-pin header connections (physical pin numbers)</caption>
+    <thead>
+      <tr>
+        <th scope="col">Pin</th>
+        <th scope="col">Header signal</th>
+        <th scope="col">Connect to</th>
+        <th scope="col">Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">1</th>
+        <td data-label="Header signal">3.3 V</td>
+        <td data-label="Connect to">GPS VIN (3.3 V modules only); BNO055 VIN</td>
+        <td data-label="Notes">Use pin 1 or pin 2 for the GPS, never both.</td>
+      </tr>
+      <tr>
+        <th scope="row">2</th>
+        <td data-label="Header signal">5 V</td>
+        <td data-label="Connect to">GPS VIN (modules that take 5 V)</td>
+        <td data-label="Notes">Check your module's VIN range on its product page.</td>
+      </tr>
+      <tr>
+        <th scope="row">3</th>
+        <td data-label="Header signal">I2C SDA</td>
+        <td data-label="Connect to">BNO055 SDA</td>
+        <td data-label="Notes">Optional orientation sensor.</td>
+      </tr>
+      <tr>
+        <th scope="row">5</th>
+        <td data-label="Header signal">I2C SCL</td>
+        <td data-label="Connect to">BNO055 SCL</td>
+        <td data-label="Notes">Optional orientation sensor.</td>
+      </tr>
+      <tr>
+        <th scope="row">6</th>
+        <td data-label="Header signal">GND</td>
+        <td data-label="Connect to">GPS GND</td>
+        <td data-label="Notes"></td>
+      </tr>
+      <tr>
+        <th scope="row">7</th>
+        <td data-label="Header signal">GPIO (PAC.06)</td>
+        <td data-label="Connect to">GPS PPS</td>
+        <td data-label="Notes">The image turns this pin into the pulse-per-second input.</td>
+      </tr>
+      <tr>
+        <th scope="row">8</th>
+        <td data-label="Header signal">UART1 TX</td>
+        <td data-label="Connect to">GPS RX</td>
+        <td data-label="Notes">The Jetson talks, the GPS listens.</td>
+      </tr>
+      <tr>
+        <th scope="row">9</th>
+        <td data-label="Header signal">GND</td>
+        <td data-label="Connect to">BNO055 GND</td>
+        <td data-label="Notes">Optional orientation sensor.</td>
+      </tr>
+      <tr>
+        <th scope="row">10</th>
+        <td data-label="Header signal">UART1 RX</td>
+        <td data-label="Connect to">GPS TX</td>
+        <td data-label="Notes">The GPS talks, the Jetson listens.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<style>
+  .pinout svg {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    max-width: 620px;
+  }
+
+  .p-pin circle,
+  .p-pin rect {
+    fill: #141f35;
+    stroke-width: 2;
+  }
+
+  .p-pin rect {
+    stroke: var(--star);
+  }
+
+  .p-pin text {
+    fill: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .p-pin--used circle,
+  .p-pin--used rect {
+    stroke-width: 3;
+  }
+
+  .p-pin--used text {
+    fill: var(--text);
+  }
+
+  .p-fn,
+  .p-mod-pin {
+    fill: var(--text);
+    font-family: var(--font-sans);
+    font-size: 17px;
+    font-weight: 600;
+  }
+
+  .p-module,
+  .p-cap {
+    fill: var(--text-2);
+    font-family: var(--font-sans);
+    font-size: 17px;
+    font-weight: 600;
+  }
+
+  .p-faint {
+    fill: var(--muted);
+    font-family: var(--font-sans);
+    font-size: 22px;
+  }
+
+  .p-small {
+    font-size: 15px;
+  }
+
+  .p-pin1 {
+    fill: var(--star);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .pin-table th[scope="row"] {
+    font-family: var(--font-mono);
+    color: var(--star);
+  }
+</style>

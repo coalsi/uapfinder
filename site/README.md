@@ -9,7 +9,10 @@ figures and the volunteer form). No cookies, analytics or third-party requests.
 |------|------|
 | `/` | What UAP Finder is, why stereo, how it works, live network figures |
 | `/how-it-works/` | Edge pipeline, uplink, matching, triangulation, error model, tracks and flags, clips, what is published, limitations |
+| `/device/` | The node: anatomy, what happens inside, two nodes as a stereo pair (with an optional animation), GPS timing, fixes to tracks, self-calibration from the stars, the setup page (mock-up), specifications and limits |
 | `/host/` | Who makes a good host, parts list with approximate prices, power and bandwidth estimates, setup overview, coverage map |
+| `/build/` | Build a node step by step: printable parts checklist, firmware check, flashing the image, SSD, camera, GPS wiring, enclosure, placement, first boot, setup page, first night, troubleshooting, command-line alternative |
+| `/download/` | The node system image (primary), source archives, server and simulator setup |
 | `/get-involved/` | Volunteer interest form (`POST /api/v1/volunteers`) and other ways to help |
 | `/faq/` | Frequently asked questions |
 | `/privacy/` | Plain-language privacy notice (draft, to be reviewed before launch) |

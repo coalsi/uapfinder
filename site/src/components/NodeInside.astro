@@ -1,0 +1,294 @@
+---
+/**
+ * What happens inside a node: four small frames (camera frame, background
+ * model, difference, tracks after the filters), then the steps in words.
+ * Illustrative scene: two stars, a cloud, an aircraft broadcasting ADS-B and
+ * one unexplained moving point.
+ */
+const panels = [
+  { key: "frame", title: "1 · Camera frame" },
+  { key: "bg", title: "2 · Background model" },
+  { key: "diff", title: "3 · Difference" },
+  { key: "tracks", title: "4 · Tracks, filtered" },
+] as const;
+const alt: Record<(typeof panels)[number]["key"], string> = {
+  frame: "A camera frame of the night sky with a cloud, two stars, an aircraft and a small moving point.",
+  bg: "The background model: the slowly updated average sky, with the cloud and the stars but without the moving aircraft or point.",
+  diff: "The difference between frame and background: only the aircraft and the moving point stand out as bright spots.",
+  tracks:
+    "Tracks after filtering: the aircraft's track is labelled as an ADS-B aircraft and dropped, the stars and cloud are not reported, and the unexplained point's track is reported.",
+};
+---
+<div class="inside-panels">
+  {
+    panels.map((p) => (
+      <figure class="ip">
+        <svg viewBox="0 0 160 126" role="img" aria-labelledby={`ip-${p.key}`}>
+          <title id={`ip-${p.key}`}>{alt[p.key]}</title>
+          <rect x="0.5" y="0.5" width="159" height="105" rx="6" class={p.key === "diff" || p.key === "tracks" ? "ip-dark" : "ip-sky"} />
+          {(p.key === "frame" || p.key === "bg") && (
+            <>
+              <ellipse cx="44" cy="74" rx="34" ry="13" class={p.key === "bg" ? "ip-cloud ip-cloud--soft" : "ip-cloud"} />
+              <ellipse cx="62" cy="66" rx="20" ry="10" class={p.key === "bg" ? "ip-cloud ip-cloud--soft" : "ip-cloud"} />
+              <circle cx="122" cy="22" r="1.6" class="ip-star" />
+              <circle cx="30" cy="26" r="1.3" class="ip-star" />
+            </>
+          )}
+          {p.key === "frame" && (
+            <>
+              <path d="M96 56 l10 -3 l-1 3 l7 0 l2 -3 l2 0 l-1 4 l1 4 l-2 0 l-2 -3 l-7 0 l1 3 l-10 -3 Z" class="ip-plane" />
+              <circle cx="132" cy="80" r="2.4" class="ip-obj" />
+            </>
+          )}
+          {p.key === "diff" && (
+            <>
+              <circle cx="104" cy="56" r="6" class="ip-hot" />
+              <circle cx="132" cy="80" r="3.6" class="ip-hot" />
+              <ellipse cx="74" cy="66" rx="6" ry="2" class="ip-faint" />
+            </>
+          )}
+          {p.key === "tracks" && (
+            <>
+              <path d="M40 72 L104 56" class="ip-trail ip-trail--drop" />
+              <circle cx="104" cy="56" r="3" class="ip-drop" />
+              <text x="58" y="50" class="ip-tag ip-tag--drop">aircraft (ADS-B)</text>
+              <path d="M150 98 Q 140 90 132 80" class="ip-trail" />
+              <circle cx="132" cy="80" r="3.4" class="ip-obj" />
+              <text x="128" y="70" text-anchor="end" class="ip-tag ip-tag--keep">report</text>
+              <text x="8" y="20" class="ip-tag ip-tag--drop">stars, cloud: not sent</text>
+            </>
+          )}
+          <text x="2" y="121" class="ip-title">{p.title}</text>
+        </svg>
+      </figure>
+    ))
+  }
+</div>
+
+<ol class="inside-steps">
+  <li>
+    <h3>Capture</h3>
+    <p>
+      The camera streams 1920 × 1080 video at 60 frames per second. Each frame is time-stamped the moment it arrives,
+      on a clock locked to GPS, and kept in a memory buffer holding the last 10 seconds.
+    </p>
+  </li>
+  <li>
+    <h3>Background model</h3>
+    <p>
+      A slowly updated average of recent frames (a 2-second time constant) absorbs the sky's brightness gradient,
+      haze, clouds that barely move, and the slow drift of the stars.
+    </p>
+  </li>
+  <li>
+    <h3>Detections</h3>
+    <p>
+      Subtracting the background leaves what changed. Pixels well above the local noise become candidate points,
+      each with a sub-pixel centre. Areas the host masks out, and anything below 3° elevation, are ignored.
+    </p>
+  </li>
+  <li>
+    <h3>Tracking</h3>
+    <p>
+      A tracker links detections from frame to frame into local tracks, predicting each one's next position and
+      bridging the odd missed frame.
+    </p>
+  </li>
+  <li>
+    <h3>Filters</h3>
+    <p>
+      Each confirmed track is checked against what is already understood: <strong>stars and planets</strong> (moving
+      at the sky's own 0.0042° per second, or not at all), <strong>clouds</strong> (large, diffuse, drifting with the
+      wind), <strong>birds and insects</strong> (big, close, flapping or out of focus) and
+      <strong>aircraft</strong> broadcasting their position by ADS-B, from the node's own receiver or an online feed.
+      Explained tracks are logged on the node and not sent.
+    </p>
+  </li>
+  <li>
+    <h3>Direction</h3>
+    <p>
+      The pixel position becomes a direction in the sky, azimuth from true north and elevation above the horizon,
+      using the lens model and the pointing the node worked out from the stars.
+    </p>
+  </li>
+  <li>
+    <h3>A signed, GPS-timed message</h3>
+    <p>
+      Ten times a second while the object is in view, the node sends about 520 bytes: the frame's capture time
+      in nanoseconds, the node's position, camera pointing, the direction to the object and a few image measurements,
+      signed with the node's own key. A heartbeat with the node's health follows every 10 seconds.
+    </p>
+  </li>
+</ol>
+
+<div class="grid grid-2 leaves">
+  <div class="card">
+    <h3>What leaves the house</h3>
+    <ul class="checklist checklist--yes">
+      <li>Sight-line messages for tracks no filter explains: time, position, pointing and direction.</li>
+      <li>A heartbeat every 10 seconds: health, camera geometry, GPS and clock state.</li>
+      <li>Ten seconds of video, only when the server asks after two or more nodes agree on the same object.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>What stays on the node</h3>
+    <ul class="checklist checklist--no">
+      <li>The continuous video stream.</li>
+      <li>Everything the filters explained: stars, clouds, birds, insects, ADS-B aircraft.</li>
+      <li>Short clips of its own detections, on its own SSD for up to 14 days, unless requested.</li>
+      <li>The setup page's live preview, which the node serves on your local network, not to the server.</li>
+    </ul>
+  </div>
+</div>
+
+<style>
+  .inside-panels {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 28px;
+  }
+
+  @media (min-width: 820px) {
+    .inside-panels {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  .ip {
+    margin: 0;
+  }
+
+  .ip svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .ip-sky {
+    fill: #0d1a33;
+    stroke: #6f7f9e;
+  }
+
+  .ip-dark {
+    fill: #03060c;
+    stroke: #6f7f9e;
+  }
+
+  .ip-cloud {
+    fill: #6d7c99;
+    opacity: 0.55;
+  }
+
+  .ip-cloud--soft {
+    opacity: 0.4;
+  }
+
+  .ip-star {
+    fill: #e8edf6;
+  }
+
+  .ip-plane {
+    fill: #c9d6ec;
+  }
+
+  .ip-obj {
+    fill: #ffd27a;
+  }
+
+  .ip-hot {
+    fill: #fff;
+  }
+
+  .ip-faint {
+    fill: #6d7c99;
+    opacity: 0.5;
+  }
+
+  .ip-trail {
+    fill: none;
+    stroke: #ffd27a;
+    stroke-width: 1.8;
+    stroke-dasharray: 2 3;
+  }
+
+  .ip-trail--drop {
+    stroke: #8e9bb2;
+  }
+
+  .ip-drop {
+    fill: #8e9bb2;
+  }
+
+  .ip-tag {
+    font-family: var(--font-sans);
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+
+  .ip-tag--drop {
+    fill: var(--muted);
+  }
+
+  .ip-tag--keep {
+    fill: var(--star);
+  }
+
+  .ip-title {
+    fill: var(--text);
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+
+  .inside-steps {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 28px;
+    counter-reset: ins;
+    display: grid;
+    gap: 14px;
+  }
+
+  @media (min-width: 820px) {
+    .inside-steps {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 32px;
+    }
+  }
+
+  .inside-steps li {
+    margin: 0;
+    counter-increment: ins;
+    position: relative;
+    padding-left: 44px;
+  }
+
+  .inside-steps li::before {
+    content: counter(ins);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 1px solid var(--line-strong);
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--star);
+    background: var(--surface);
+  }
+
+  .inside-steps h3 {
+    font-size: 1.05rem;
+    margin-bottom: 0.25em;
+  }
+
+  .inside-steps p {
+    color: var(--text-2);
+    margin: 0;
+    font-size: 0.97rem;
+  }
+</style>

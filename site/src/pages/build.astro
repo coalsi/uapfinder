@@ -1,0 +1,914 @@
+---
+import Base from "../layouts/Base.astro";
+import BuildStep from "../components/BuildStep.astro";
+import BuildFigure from "../components/BuildFigure.astro";
+import HeaderPinout from "../components/HeaderPinout.astro";
+import SetupPhoneMock from "../components/SetupPhoneMock.astro";
+import { downloads, links, NODE_IMAGE_NAME, nvidia, REPO_URL, sitePath } from "../config";
+
+const description =
+  "Build a UAP Finder node step by step: parts checklist, the one-time firmware check, flashing the system image, fitting the SSD, camera and GPS, enclosure and mounting, first boot, the setup page and automatic star calibration, plus troubleshooting.";
+
+interface CheckItem {
+  label: string;
+  note?: string;
+}
+const checklist: { title: string; items: CheckItem[] }[] = [
+  {
+    title: "Required",
+    items: [
+      { label: "NVIDIA Jetson Orin Nano 8 GB developer kit", note: "Super kit, or an original kit; includes the 19 V power supply" },
+      { label: "IMX477 camera for Jetson with a 22-pin cable", note: "e.g. Arducam B0249" },
+      { label: "≈ 90° M12 lens with CS adapter", note: "e.g. Arducam M23356H09" },
+      { label: "GPS module with a PPS pin", note: "e.g. Adafruit Ultimate GPS v3 or SparkFun NEO-M9N" },
+      { label: "Active GPS antenna", note: "plus a u.FL-to-SMA adapter if your module needs one" },
+      { label: "microSD card, 64 GB or larger, A2" },
+      { label: "5 female-to-female jumper wires", note: "for the GPS" },
+      { label: "Weatherproof enclosure, clear dome, cable glands" },
+      { label: "Pole or bracket, outdoor-rated power and Ethernet cable" },
+    ],
+  },
+  {
+    title: "Recommended",
+    items: [
+      { label: "NVMe M.2 SSD, 256–512 GB", note: "PCIe NVMe, not SATA; needed to save clips at full speed" },
+      { label: "ADS-B receiver and 1090 MHz antenna", note: "RTL-SDR-type USB receiver" },
+      { label: "Dew heater ring for the dome" },
+    ],
+  },
+  {
+    title: "Optional",
+    items: [{ label: "BNO055 orientation sensor", note: "plus 4 more jumper wires" }],
+  },
+  {
+    title: "Tools and other things",
+    items: [
+      { label: "A computer with a microSD card reader" },
+      { label: "A phone or laptop on the same network as the node" },
+      { label: "Small Phillips screwdriver" },
+      { label: "Multimeter", note: "to confirm pin 1 before wiring" },
+      { label: "Soldering iron", note: "only if your GPS board's header pins are not fitted" },
+      { label: "Your claim code", note: "from the network coordinator, format XXXX-XXXX" },
+      { label: "For the firmware check: DisplayPort monitor, USB keyboard" },
+    ],
+  },
+];
+
+const toc: [string, string][] = [
+  ["checklist", "Parts checklist"],
+  ["firmware", "2 · Firmware"],
+  ["flash", "3 · Flash"],
+  ["ssd", "4 · SSD"],
+  ["camera", "5 · Camera"],
+  ["gps", "6 · GPS"],
+  ["enclosure", "10 · Enclosure"],
+  ["setup", "14 · Setup page"],
+  ["troubleshooting", "Troubleshooting"],
+  ["command-line", "Command-line install"],
+];
+
+const shaCheck = `# macOS
+shasum -a 256 ${NODE_IMAGE_NAME.replace("<version>", "0.2.0")}
+# Linux
+sha256sum ${NODE_IMAGE_NAME.replace("<version>", "0.2.0")}
+# Windows (PowerShell)
+Get-FileHash ${NODE_IMAGE_NAME.replace("<version>", "0.2.0")} -Algorithm SHA256`;
+
+const cliInstall = `sudo apt-get update && sudo apt-get install -y git
+git clone ${REPO_URL}.git
+cd uapfinder
+sudo ./edge/deploy/jetson/setup.sh`;
+
+const qspi = `sudo apt-get update
+sudo apt-get install nvidia-l4t-jetson-orin-nano-qspi-updater
+sudo reboot`;
+---
+<Base title="Build a node, step by step" description={description}>
+  <header class="page-hero">
+    <div class="wrap">
+      <p class="eyebrow">Build a node</p>
+      <h1>Build a node, step by step</h1>
+      <p class="lead">
+        Flash one microSD card, plug the parts together, put the node outside and turn it on. A phone is the only
+        other tool you need for setup. Allow an afternoon for assembly, then one clear night for the node to calibrate
+        itself.
+      </p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href={downloads.nodeImage}>Get the system image</a>
+        <a class="btn btn-secondary" href={sitePath("/device/")}>How the node works</a>
+      </div>
+      <nav aria-label="On this page">
+        <ul class="toc">
+          {toc.map(([id, label]) => <li><a href={`#${id}`}>{label}</a></li>)}
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div class="callout callout--warn status">
+      <p>
+        <strong>New and not yet hardware-tested.</strong> The system image, its setup page and the automatic star
+        calibration are new. They are built and tested automatically and in containers, but have not yet been booted
+        on a real Orin Nano with a camera and GPS. The camera connector setup, PPS on pin 7 and the Wi-Fi hotspot in
+        particular need a real device. Expect some troubleshooting, and please
+        <a href={links.issues}>report what you find</a>.
+      </p>
+    </div>
+    <div class="callout callout--star">
+      <p>
+        <strong>Register before you buy.</strong> A node is only useful with a partner 5–40 miles away, and you need a
+        claim code from the network coordinator to finish setup. <a href={sitePath("/get-involved/#signup")}>Register
+        your interest</a> and check the <a href={links.coverageMap}>coverage map</a> first.
+      </p>
+    </div>
+  </div>
+
+  <section id="checklist" class="section section--tight anchor-section checklist-section" aria-labelledby="checklist-title">
+    <div class="wrap">
+      <div class="checklist-head">
+        <h2 id="checklist-title">Parts checklist</h2>
+        <button type="button" class="btn btn-secondary btn-sm" data-print-checklist hidden>Print checklist</button>
+      </div>
+      <p class="muted small">
+        Prices, sources and alternatives are in the <a href={sitePath("/host/#cost")}>parts list</a>. Examples are
+        illustrations, not endorsements; equivalent parts work.
+      </p>
+      <div class="check-groups">
+        {
+          checklist.map((g) => (
+            <fieldset class="check-group">
+              <legend>{g.title}</legend>
+              <ul>
+                {g.items.map((it) => (
+                  <li>
+                    <label>
+                      <input type="checkbox" />
+                      <span>
+                        {it.label}
+                        {it.note && <span class="check-note">{it.note}</span>}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </fieldset>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap steps-wrap">
+    <BuildStep n={1} id="parts" title="Get the parts" need={[`The checklist above and the <a href="${sitePath("/host/#cost")}">parts list with prices</a>`]}>
+      <ol>
+        <li>Register your interest and wait for the coordinator to confirm that your location fits the network.</li>
+        <li>Buy the parts. Typical total: roughly $700–1,000 including the recommended ADS-B receiver.</li>
+        <li>
+          Check the GPS module's product page for two things: that it has a <strong>PPS</strong> output pin, and which
+          supply voltage its VIN pin accepts (3.3 V, 5 V or both). You need both in step 6.
+        </li>
+      </ol>
+      <Fragment slot="check">
+        <p>Everything on the required list is on your table, plus the claim code (it can arrive later, before step 14).</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>A USB GPS dongle without a PPS wire. It works, but timing falls back to internet time.</li>
+          <li>A SATA M.2 SSD. The developer kit's M.2 Key M slots need a PCIe NVMe drive.</li>
+          <li>A Raspberry Pi camera cable with a 15-pin end. The developer kit's camera connectors are 22-pin.</li>
+        </ul>
+      </Fragment>
+    </BuildStep>
+
+    <BuildStep
+      n={2}
+      id="firmware"
+      title="Check the firmware, once"
+      need={["A DisplayPort monitor (or a DisplayPort adapter) and a USB keyboard", "Only if an update is needed: a spare microSD card, an internet connection for the Jetson, about an hour"]}
+    >
+      <p>
+        Developer kits that left the factory with older (JetPack 5) firmware cannot start a JetPack 6 system such as
+        the UAP Finder image until their firmware has been updated once. Kits that already have firmware version 36
+        or later skip this step.
+      </p>
+      <ol>
+        <li>Connect the monitor and keyboard to the developer kit. No microSD card is needed.</li>
+        <li>Plug in the power supply and press <kbd>Esc</kbd> repeatedly while the NVIDIA logo shows. The UEFI setup screen opens.</li>
+        <li>
+          Read the firmware version near the top of the screen, under the board name. <strong>36.</strong> followed by
+          anything (for example 36.4.3) means you are done: go to step 3. A lower number (for example 35.x, 5.0 or 3.0)
+          means you need the update. (A kit already on 36.x is brought to the card's exact firmware version
+          automatically on its first boot, with one extra restart.)
+        </li>
+        <li>
+          To update, follow NVIDIA's <a href={nvidia.gettingStarted}>Jetson Orin Nano Developer Kit getting-started
+          guide</a> exactly. In outline: write NVIDIA's <strong>JetPack 5.1.3</strong> SD-card image to a spare card
+          with balenaEtcher, boot it and finish Ubuntu's first-run setup; the firmware updates during the next
+          reboot. Then install NVIDIA's QSPI updater and reboot again:
+        </li>
+      </ol>
+      <pre tabindex="0" aria-label="Commands for NVIDIA's QSPI firmware update"><code>{qspi}</code></pre>
+      <p class="small muted">
+        The package name and order come from NVIDIA's guide; if the guide says something different, follow the guide.
+        The process takes several reboots. Never remove power while an update is running.
+      </p>
+      <Fragment slot="check">
+        <p>The UEFI screen (press <kbd>Esc</kbd> at start-up) shows a firmware version starting with 36.</p>
+        <p class="small">
+          No monitor? You can skip ahead and try the UAP Finder card. If neither the setup page nor the hotspot appears
+          within about 10 minutes of first power-on (step 13), old firmware is the most likely cause.
+        </p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>Unplugging during a firmware update.</li>
+          <li>Rebooting too soon: users report the first update can take 15–20 minutes to download and prepare.</li>
+          <li>Assuming a new kit has new firmware. Check; it takes a minute.</li>
+        </ul>
+      </Fragment>
+      <BuildFigure slot="figure" kind="uefi" />
+    </BuildStep>
+
+    <BuildStep
+      n={3}
+      id="flash"
+      title="Flash the UAP Finder image"
+      need={["A computer with a microSD card reader", "A microSD card, 64 GB or larger, A2 rated", `<a href="https://etcher.balena.io/">balenaEtcher</a> (free, macOS, Windows, Linux)`]}
+    >
+      <ol>
+        <li>
+          Open the <a href={downloads.nodeImage}>latest release</a> and download
+          <code class="wrap-code">{NODE_IMAGE_NAME}</code> and its SHA-256 checksum file. The image is under 2 GB.
+        </li>
+        <li>Optional but wise: check the download against the published checksum. The two strings must match.</li>
+      </ol>
+      <pre tabindex="0" aria-label="Commands to check the image's SHA-256 checksum"><code>{shaCheck}</code></pre>
+      <ol start="3">
+        <li>Insert the microSD card and start balenaEtcher.</li>
+        <li><strong>Flash from file</strong>: choose the <code>.img.xz</code> file. No need to unpack it.</li>
+        <li><strong>Select target</strong>: choose the microSD card. Check the size so you do not overwrite another disk.</li>
+        <li><strong>Flash!</strong> Etcher writes the card, then reads it back to verify it.</li>
+        <li>Eject the card when Etcher says it is done.</li>
+      </ol>
+      <Fragment slot="check">
+        <p>Etcher finishes and reports success, with no validation error.</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>Clicking "Format" when your computer says it cannot read the card afterwards. That is normal for a Linux card: choose Ignore or Cancel.</li>
+          <li>Writing the image with a file copy instead of Etcher.</li>
+          <li>A slow or counterfeit card. Use a name-brand A2 card of 64 GB or more.</li>
+        </ul>
+      </Fragment>
+      <BuildFigure slot="figure" kind="etcher" />
+    </BuildStep>
+
+    <BuildStep n={4} id="ssd" title="Install the NVMe SSD" badge="Recommended" need={["NVMe M.2 SSD (PCIe), 2280 or 2230 size", "Small Phillips screwdriver"]}>
+      <ol>
+        <li>Unplug the power. Touch something metal to discharge static before handling the boards.</li>
+        <li>Turn the developer kit over. The M.2 Key M slots are on the underside of the carrier board: a long one for 2280 (80 mm) drives and a short one for 2230 drives.</li>
+        <li>Remove the small retaining screw opposite the slot you will use.</li>
+        <li>Slide the SSD's gold contacts into the slot at an angle of about 30°, with the notch lined up with the key in the slot.</li>
+        <li>Press the far end down flat and refit the screw. Snug, not tight.</li>
+      </ol>
+      <p>
+        The node formats the drive automatically on first boot and keeps clips and calibration on it, but only if the
+        drive is blank (no partition table). It never erases a drive that has partitions, so use a new or wiped drive.
+      </p>
+      <Fragment slot="check">
+        <p>The SSD lies flat and is held by the screw. After first boot the setup page lists it under Storage.</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>A SATA M.2 drive: it fits the slot but will not work.</li>
+          <li>A drive with old partitions: it will not be formatted or used for clips until it is wiped.</li>
+          <li>Losing the tiny screw. Work over a tray.</li>
+        </ul>
+      </Fragment>
+      <BuildFigure slot="figure" kind="ssd" />
+    </BuildStep>
+
+    <BuildStep
+      n={5}
+      id="camera"
+      title="Connect the camera to CAM0 and fit the lens"
+      need={["IMX477 camera and its 22-pin cable", "Lens and CS adapter", "A clean, dry hands-off attitude to the sensor"]}
+    >
+      <ol>
+        <li>Unplug the power. Find the two camera connectors on the carrier board, labelled <strong>CAM0</strong> and <strong>CAM1</strong>. Use <strong>CAM0</strong>: the image sets up the camera on that connector only.</li>
+        <li>Gently lift the connector's latch. It hinges up; it does not come off.</li>
+        <li>Slide the 22-pin end of the ribbon in straight and all the way, with its <strong>metal contacts facing down, toward the board</strong>.</li>
+        <li>Press the latch back down to clamp the ribbon. Connect the other end to the camera as its maker describes.</li>
+        <li>Screw the CS adapter onto the camera, then the lens into the adapter. Remove all dust caps.</li>
+        <li>
+          Focus at infinity: point the camera at something far away (a distant tree line or mast, or a bright star or
+          planet at night) and turn the lens until it is sharpest, then lock it with its ring or set screw. You can
+          fine-tune later with the live preview on the setup page.
+        </li>
+      </ol>
+      <p class="small muted">
+        A USB (UVC) camera also works in any USB 3 port and is found automatically, but the recommended CSI camera is
+        what the software is tuned for.
+      </p>
+      <Fragment slot="check">
+        <p>The ribbon is straight and square in the connector and the latch is closed. After first boot the setup page shows the camera as found and the preview shows the sky.</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>Using CAM1. The image only enables CAM0.</li>
+          <li>The ribbon upside down or not fully inserted: the most common reason a camera is not detected.</li>
+          <li>Plugging or unplugging the ribbon with power on.</li>
+          <li>Touching the sensor, or focusing on something close, like the room.</li>
+        </ul>
+      </Fragment>
+      <div slot="figure" class="fig-stack">
+        <BuildFigure kind="csi" />
+        <BuildFigure kind="focus" />
+      </div>
+    </BuildStep>
+
+    <BuildStep
+      n={6}
+      id="gps"
+      title="Wire the GPS to the 40-pin header"
+      need={["GPS module with PPS and its antenna", "5 female-to-female jumper wires", "Multimeter (recommended)"]}
+    >
+      <ol>
+        <li>
+          Find <strong>pin 1</strong> of the 40-pin header: it is marked on the board (look for a "1", a triangle or a
+          square solder pad). Odd pins (1, 3, 5 …) run along one row and even pins (2, 4, 6 …) along the other, so pin 2
+          is next to pin 1.
+        </li>
+        <li>
+          Confirm with a multimeter, with the board powered and nothing connected to the header: pin 1 to pin 6 reads
+          about 3.3 V and pin 2 to pin 6 about 5 V. Take care not to bridge two pins with the probe. Then unplug the
+          power.
+        </li>
+        <li>
+          Power: connect the module's <strong>VIN</strong> to <strong>pin 2</strong> (5 V) if the module accepts 5 V,
+          or to <strong>pin 1</strong> (3.3 V) if it needs 3.3 V. Connect <strong>GND</strong> to <strong>pin 6</strong>.
+        </li>
+        <li>Serial: module <strong>TX</strong> to <strong>pin 10</strong> (UART1 RX), module <strong>RX</strong> to <strong>pin 8</strong> (UART1 TX).</li>
+        <li>Time: module <strong>PPS</strong> to <strong>pin 7</strong>.</li>
+        <li>
+          Connect the antenna (push u.FL connectors straight on; they are fragile) and place it where it sees the sky:
+          under a plastic lid is fine, under metal is not.
+        </li>
+      </ol>
+      <p class="small muted">
+        The header's signal pins work at 3.3 V. The module's TX and PPS outputs must be 3.3 V logic; most GPS
+        breakouts are, but check yours. A USB GPS also works in any USB port, without PPS, using network time instead.
+      </p>
+      <Fragment slot="check">
+        <p>
+          Five wires, each on the pin in the table. After first boot the setup page shows a GPS fix with the number of
+          satellites, and <strong>PPS: locked</strong>. The first fix outdoors can take several minutes. On the Adafruit
+          Ultimate GPS, the FIX light blinks about once a second while searching and about once every 15 seconds once it
+          has a fix.
+        </p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>TX to TX and RX to RX. They cross: TX goes to RX.</li>
+          <li>Counting pins from the wrong end or the wrong row. Start from the marked pin 1.</li>
+          <li>5 V into a 3.3 V-only module.</li>
+          <li>PPS on any pin other than 7. The image only listens on pin 7.</li>
+        </ul>
+      </Fragment>
+      <HeaderPinout slot="figure" />
+    </BuildStep>
+
+    <BuildStep
+      n={7}
+      id="orientation"
+      title="Add the orientation sensor"
+      badge="Optional"
+      need={["Adafruit BNO055 breakout (or equivalent)", "4 female-to-female jumper wires"]}
+    >
+      <ol>
+        <li>Unplug the power.</li>
+        <li>Connect <strong>VIN</strong> to <strong>pin 1</strong> (3.3 V), <strong>GND</strong> to <strong>pin 9</strong>, <strong>SDA</strong> to <strong>pin 3</strong> and <strong>SCL</strong> to <strong>pin 5</strong>.</li>
+        <li>Fix the sensor rigidly to the camera bracket so it moves with the camera, not with the box.</li>
+      </ol>
+      <p>
+        The node finds the sensor by itself (address 0x28 or 0x29). It gives the star calibration a starting guess and
+        notices if the mount moves; it is not precise enough (about 1°) to measure pointing.
+      </p>
+      <p class="small muted">
+        If your GPS also runs from pin 1 (3.3 V), both modules need that pin: use a splitter jumper, or power a GPS
+        that accepts 5 V from pin 2 instead.
+      </p>
+      <Fragment slot="check">
+        <p>After first boot the setup page lists the orientation sensor as found.</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>Mounting it on the enclosure instead of the camera bracket.</li>
+          <li>Powering it from 5 V.</li>
+        </ul>
+      </Fragment>
+    </BuildStep>
+
+    <BuildStep
+      n={8}
+      id="adsb"
+      title="Add the ADS-B receiver"
+      badge="Recommended"
+      need={["RTL-SDR-type USB receiver (e.g. RTL-SDR Blog V4L)", "1090 MHz antenna and coax"]}
+    >
+      <ol>
+        <li>Plug the receiver into one of the developer kit's USB ports.</li>
+        <li>Mount the antenna outside the enclosure, upright with a clear view, and run the coax in through a cable gland.</li>
+      </ol>
+      <p>
+        The image detects RTL-SDR-type receivers and runs a decoder (readsb) automatically, so the node can recognise
+        aircraft from their own position broadcasts without relying on an internet feed.
+      </p>
+      <Fragment slot="check">
+        <p>After first boot the setup page shows the ADS-B receiver as the ADS-B source.</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>Leaving the antenna inside a metal box, or low behind a wall.</li>
+        </ul>
+      </Fragment>
+    </BuildStep>
+
+    <BuildStep n={9} id="microsd" title="Insert the microSD card" need={["The card you flashed in step 3"]}>
+      <ol>
+        <li>Unplug the power.</li>
+        <li>Find the microSD slot on the <strong>underside of the Jetson module</strong>, the smaller board with the heatsink and fan, at its edge.</li>
+        <li>Slide the card in gently until it is fully seated. It only fits one way; if it does not slide in easily, turn it over rather than pushing harder.</li>
+      </ol>
+      <Fragment slot="check">
+        <p>The card sits fully in the slot and does not move when touched lightly.</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>Forcing the card in the wrong way round.</li>
+          <li>Looking for a slot on the carrier board: there is none; it is on the module.</li>
+        </ul>
+      </Fragment>
+      <BuildFigure slot="figure" kind="microsd" />
+      <div slot="after" class="callout bench">
+        <p>
+          <strong>Tip: test on the bench first.</strong> Before sealing anything into the enclosure, you can do steps
+          12–14 on a table, with the GPS antenna by a window, to see the camera, GPS and storage all found. Then shut
+          down from the setup page, unplug and carry on.
+        </p>
+      </div>
+    </BuildStep>
+
+    <BuildStep
+      n={10}
+      id="enclosure"
+      title="Enclosure, dome, heater and mounting"
+      need={["Weatherproof enclosure and clear acrylic dome", "Cable glands sized for your cables, a breather vent", "Mounting plate, standoffs and a rigid camera bracket", "Dew heater ring (recommended), sun shade", "Outdoor-rated power with GFCI/RCD protection"]}
+    >
+      <ol>
+        <li>Mount the developer kit on a plate with standoffs, leaving room for air around its fan and heatsink.</li>
+        <li>Cut the opening for the dome, seal the dome in with outdoor sealant, and fix the camera on a rigid bracket so the lens sits close to the dome's centre.</li>
+        <li>Fit the dew heater ring around the dome's base. Power it from its own supply as its maker describes, not from the 40-pin header. Nothing in the node software controls it.</li>
+        <li>Put the cable glands in the <strong>bottom</strong> of the box, facing down, with a drip loop in every cable outside so water drips off before it reaches the gland.</li>
+        <li>Add a breather vent, shade the box from direct sun (keeping the dome's view open), and cover any bright status lights inside the dome with tape so they do not reflect into the lens.</li>
+        <li>
+          Electrical safety: run only the low-voltage DC cable into the box and keep the power supply indoors or in its
+          own weatherproof box, on an outlet protected by a GFCI/RCD. Any mains wiring outdoors should follow local
+          rules; if in doubt, ask a qualified electrician.
+        </li>
+        <li>Fix the box to a stiff pole or bracket. It must not sway in the wind or sag over time: the calibration assumes the camera stays put.</li>
+      </ol>
+      <Fragment slot="check">
+        <p>Push the box firmly: it does not move. The dome is clean, glands are tight, and nothing inside rattles.</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>No heater: the dome fogs or frosts on clear nights, exactly when calibration needs it.</li>
+          <li>A sealed box in full sun: the computer overheats and slows down.</li>
+          <li>Cables entering from the top or sides, letting water run in.</li>
+          <li>A flexible mount: every wobble is a pointing error.</li>
+        </ul>
+      </Fragment>
+      <BuildFigure slot="figure" kind="mount" />
+    </BuildStep>
+
+    <BuildStep n={11} id="place" title="Place and aim it" need={["A spot with open sky and, if possible, no direct streetlight glare"]}>
+      <ol>
+        <li>Choose the spot with the most open sky above about 10–15° elevation, away from bright lights.</li>
+        <li>Aim the camera's centre <strong>between 45° and straight up</strong>.</li>
+        <li>Turn it roughly towards the area to cover, for example the sky between you and the neighbouring nodes the coordinator mentions. A rough heading is enough.</li>
+      </ol>
+      <p>
+        You do not need to measure anything. On the first clear night the node works out exactly where it points from
+        the stars. After that, avoid moving it; if it does move, its directions are off until it recalibrates (it
+        recalibrates when its last calibration is more than 7 days old).
+      </p>
+      <Fragment slot="check">
+        <p>From the camera's position you can see mostly sky in the direction it points, with no roof edge, tree or light in the middle of the view. The live preview in step 14 confirms it.</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>Pointing low towards the horizon: more haze, refraction and buildings, and more of the neighbours in view.</li>
+          <li>Aiming at a streetlight or security light.</li>
+        </ul>
+      </Fragment>
+      <BuildFigure slot="figure" kind="aim" />
+    </BuildStep>
+
+    <BuildStep n={12} id="network" title="Connect to the network" need={["Ethernet cable to your router (recommended), or your Wi-Fi name and password"]}>
+      <ol>
+        <li><strong>Ethernet (recommended):</strong> plug an outdoor-rated cable from the node to your router or a switch.</li>
+        <li>
+          <strong>Wi-Fi:</strong> leave Ethernet unplugged. If the node has no network 90 seconds after it starts, it
+          opens its own Wi-Fi network called <code>UAPFinder-XXXX</code> (password <code>uapfinder</code>), where you
+          pick your home Wi-Fi on the setup page in step 14. The hotspot closes once the node is on your network.
+        </li>
+      </ol>
+      <p>
+        The node only connects outwards to the server. You do not need a static address or any router port
+        forwarding.
+      </p>
+      <Fragment slot="check">
+        <p>With Ethernet, the router's port light comes on once the node is powered (step 13).</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>Plugging the node into a guest network that keeps devices apart: your phone then cannot reach its setup page.</li>
+        </ul>
+      </Fragment>
+    </BuildStep>
+
+    <BuildStep n={13} id="power" title="Power on and wait for the first boot" need={["The 19 V power supply from the kit"]}>
+      <ol>
+        <li>Plug the supply into the developer kit's round <strong>DC power jack</strong> (not the USB-C port), then into the outlet.</li>
+        <li>
+          Wait <strong>a few minutes</strong>. On its first start the node expands the system to fill the card, names
+          itself <code>uapfinder-XXXX</code> (XXXX is four characters unique to your board), creates its own keys,
+          formats a blank NVMe drive and sets up the camera and PPS connections. It <strong>restarts by itself
+          once</strong> to apply them, and once more if it brings 36.x firmware up to the version on the card. Do not
+          unplug it during this time.
+        </li>
+      </ol>
+      <Fragment slot="check">
+        <p>After a few minutes, either the setup page answers at <code>http://uapfinder.local</code> or the <code>UAPFinder-XXXX</code> Wi-Fi network appears.</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>Pulling the power during first boot, or mistaking its automatic restart for a fault.</li>
+          <li>Using a different power supply than the one in the kit.</li>
+          <li>Giving up too early: give it at least five minutes before troubleshooting.</li>
+        </ul>
+      </Fragment>
+    </BuildStep>
+
+    <BuildStep n={14} id="setup" title="Open the setup page and claim the node" need={["A phone or laptop", "Your claim code"]}>
+      <ol>
+        <li>
+          On a phone or laptop on the same network, open <a href="http://uapfinder.local"><code>http://uapfinder.local</code></a>
+          (or <code>http://uapfinder-XXXX.local</code>). Using the hotspot instead? Join <code>UAPFinder-XXXX</code>
+          with password <code>uapfinder</code> and open <code>http://10.42.0.1</code>.
+        </li>
+        <li>If you are on the hotspot, choose your home Wi-Fi and enter its password first.</li>
+        <li>
+          Enter the <strong>claim code</strong> from the coordinator, like <code>7KQ2-M9XD</code>. Case does not matter
+          and the dash is optional. Codes never contain the letters I, L, O or U, so a round character is a zero.
+        </li>
+        <li>Set a <strong>device password</strong> and keep it somewhere safe. Every change to the node needs it from now on.</li>
+        <li>
+          Check the status list:
+          <ul>
+            <li><strong>Camera</strong> found, and the <strong>live preview</strong> shows sharp, open sky. Use the horizon and elevation overlay to adjust the aim.</li>
+            <li><strong>GPS</strong> fix with satellites, and <strong>PPS</strong> locked.</li>
+            <li><strong>Time error</strong> with no warning (it warns above 2 ms; allow a few minutes after start-up to settle).</li>
+            <li><strong>Storage</strong>, and the orientation sensor and ADS-B receiver if you fitted them.</li>
+            <li><strong>Server</strong> connected.</li>
+          </ul>
+        </li>
+      </ol>
+      <Fragment slot="check">
+        <p>The claim succeeds and every item you fitted is listed as found. "Pointing: waiting for a clear night" is expected at this stage.</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>A code that was already used or has expired: each code works once. Ask the coordinator for a new one.</li>
+          <li>Choosing a weak device password. Anyone on your network can reach the page.</li>
+        </ul>
+      </Fragment>
+      <div slot="figure" class="phones-pair">
+        <SetupPhoneMock screen="claim" />
+        <SetupPhoneMock screen="status" />
+      </div>
+    </BuildStep>
+
+    <BuildStep n={15} id="first-night" title="Wait for the first clear night" need={["Patience, and a clean, dry dome"]}>
+      <p>There is nothing to do. The node calibrates itself:</p>
+      <ol>
+        <li>Every 30 minutes, once the Sun is more than 12° below the horizon and the node has a GPS fix, it tries to match the stars it sees with its star catalogue.</li>
+        <li>On success it saves its exact pointing and lens model and starts reporting with full precision. Clouds just mean it tries again later.</li>
+        <li>It repeats the calibration about once a week.</li>
+      </ol>
+      <p class="small muted">
+        Until the first calibration the node reports with a large uncertainty, which the server handles safely. The
+        automatic calibration is new and has not yet been tested on real hardware under a real sky.
+      </p>
+      <Fragment slot="check">
+        <p>After a clear night the setup page's pointing line no longer says "waiting for a clear night".</p>
+      </Fragment>
+      <Fragment slot="mistakes">
+        <ul>
+          <li>A fogged, frosted or dirty dome, or a lens cap left on.</li>
+          <li>Moving the node after it has calibrated.</li>
+        </ul>
+      </Fragment>
+    </BuildStep>
+
+    <BuildStep n={16} id="map" title="Confirm it on the live map">
+      <ol>
+        <li>Open the <a href={links.map}>live map</a> and find your node. Publicly, its position is rounded to about 1 km.</li>
+        <li>It shows as online while the server hears from it; the node sends a heartbeat every 10 seconds.</li>
+        <li>Let the coordinator know it is running. That's it.</li>
+      </ol>
+      <Fragment slot="check">
+        <p>Your node is on the map and online.</p>
+      </Fragment>
+    </BuildStep>
+  </div>
+
+  <section id="troubleshooting" class="section anchor-section" aria-labelledby="ts-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="ts-title">Troubleshooting</h2>
+        <p>
+          The setup page's <strong>Diagnostics</strong> button downloads a bundle you can attach to an
+          <a href={links.issues}>issue report</a>. Always shut down from the setup page before unplugging.
+        </p>
+      </div>
+      <div class="ts">
+        <details>
+          <summary>No setup page found</summary>
+          <ul>
+            <li>Give the first boot at least five minutes.</li>
+            <li>Try <code>http://uapfinder-XXXX.local</code>. Some phones and computers do not resolve <code>.local</code> names: look in your router's list of devices for <code>uapfinder-XXXX</code> and open <code>http://</code> followed by its address.</li>
+            <li>Make sure your phone is on the same network, not a guest or mobile network.</li>
+            <li>No Ethernet? Look for the <code>UAPFinder-XXXX</code> hotspot instead.</li>
+            <li>If after 10 minutes there is neither a page nor a hotspot, the firmware is probably too old (step 2), or the card was not written correctly: flash it again (step 3).</li>
+          </ul>
+        </details>
+        <details>
+          <summary>The hotspot does not appear</summary>
+          <ul>
+            <li>It only starts when the node has no network 90 seconds after start-up. With Ethernet connected, use <code>http://uapfinder.local</code> instead.</li>
+            <li>It closes as soon as the node joins a network.</li>
+            <li>Your phone may leave a network without internet: tell it to stay connected, or turn off mobile data while you set up.</li>
+            <li>Move closer: the enclosure weakens Wi-Fi.</li>
+          </ul>
+        </details>
+        <details>
+          <summary>No GPS fix</summary>
+          <ul>
+            <li>Give it several minutes outdoors with a clear view of the sky; a first fix takes longest.</li>
+            <li>Check the antenna is connected and not under metal.</li>
+            <li>Check TX and RX are crossed (module TX to pin 10, module RX to pin 8) and the module has power (pin 1 or 2, GND on pin 6).</li>
+          </ul>
+        </details>
+        <details>
+          <summary>GPS fix, but no PPS</summary>
+          <ul>
+            <li>PPS must go to pin 7, and the module must have a fix: many modules only pulse once they do.</li>
+            <li>Check the module's PPS output is 3.3 V logic and the jumper is firmly on.</li>
+            <li>A USB GPS has no PPS: the node then uses network time, which is less precise.</li>
+          </ul>
+        </details>
+        <details>
+          <summary>Camera not found</summary>
+          <ul>
+            <li>Power off, then reseat the ribbon in <strong>CAM0</strong>: straight, all the way in, contacts facing the board, latch closed.</li>
+            <li>Check both ends of the ribbon and that it is the camera kit's 22-pin cable.</li>
+            <li>The image is set up for the IMX477 camera on CAM0. Other CSI cameras may need changes; a USB camera is found automatically.</li>
+          </ul>
+        </details>
+        <details>
+          <summary>Time error warning</summary>
+          <ul>
+            <li>Allow several minutes after start-up for the clock to settle.</li>
+            <li>Check that PPS shows as locked; without PPS the error is usually a few milliseconds, above the 2 ms warning level.</li>
+          </ul>
+        </details>
+        <details>
+          <summary>Pointing still "waiting for a clear night"</summary>
+          <ul>
+            <li>It needs real darkness (Sun 12° below the horizon), a clear sky and a GPS fix.</li>
+            <li>Check the dome for dew, frost or dirt, the lens cap, and focus (stars should be sharp points in the preview).</li>
+            <li>A bright Moon, haze or heavy light pollution can make it take longer. It keeps trying every 30 minutes.</li>
+          </ul>
+        </details>
+        <details>
+          <summary>The board does not start at all</summary>
+          <ul>
+            <li>Use the kit's 19 V supply in the round DC jack.</li>
+            <li>With a monitor connected, check whether anything appears; a black screen or a UEFI shell points to old firmware (step 2).</li>
+          </ul>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section id="command-line" class="section anchor-section" aria-labelledby="cli-title">
+    <div class="wrap split split--wide-left split--top">
+      <div>
+        <h2 id="cli-title">Alternative: install from the command line</h2>
+        <p>
+          Already running NVIDIA JetPack 6 on your Jetson and prefer a terminal? The command-line installer produces the
+          same system as the image: the same services, setup page and automatic calibration. Then continue from step 14.
+        </p>
+        <pre tabindex="0" aria-label="Command-line installation on JetPack 6"><code>{cliInstall}</code></pre>
+        <p class="small muted">
+          Options, configuration and checks are in the <a href={links.edgeGuide}>edge README</a>. The script is
+          <a href={links.jetsonSetupScript}><code>edge/deploy/jetson/setup.sh</code></a>.
+        </p>
+      </div>
+      <aside class="card" aria-labelledby="more-title">
+        <h3 id="more-title">Also useful</h3>
+        <ul>
+          <li><a href={sitePath("/device/")}>How the node works</a>, with diagrams</li>
+          <li><a href={sitePath("/download/")}>Downloads</a>: image, source and server</li>
+          <li><a href={nvidia.gettingStarted}>NVIDIA's getting-started guide</a></li>
+          <li><a href={links.applianceDoc}>The appliance design</a> (technical)</li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+</Base>
+
+<script>
+  const button = document.querySelector<HTMLButtonElement>("[data-print-checklist]");
+  if (button) {
+    button.hidden = false;
+    button.addEventListener("click", () => {
+      document.documentElement.dataset.print = "checklist";
+      window.print();
+    });
+    window.addEventListener("afterprint", () => delete document.documentElement.dataset.print);
+  }
+</script>
+
+<style>
+  .status {
+    margin-top: 28px;
+  }
+
+  .checklist-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .checklist-head h2 {
+    margin: 0;
+  }
+
+  .btn-sm {
+    min-height: 38px;
+    padding: 0.4em 1em;
+    font-size: 0.95rem;
+  }
+
+  .check-groups {
+    columns: 3 280px;
+    column-gap: 16px;
+  }
+
+  .check-groups > * {
+    break-inside: avoid;
+    margin-bottom: 16px !important;
+  }
+
+  .check-group {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 12px 18px 16px;
+    margin: 0;
+    min-width: 0;
+  }
+
+  .check-group legend {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--star);
+    padding: 0 6px;
+  }
+
+  .check-group ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .check-group li + li {
+    margin-top: 8px;
+  }
+
+  .check-group label {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    cursor: pointer;
+  }
+
+  .check-group input {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    margin-top: 4px;
+    accent-color: var(--accent);
+  }
+
+  .check-note {
+    display: block;
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+
+  .fig-stack,
+  .phones-pair {
+    display: grid;
+    gap: 18px;
+  }
+
+  @media (min-width: 560px) {
+    .phones-pair {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  .bench {
+    margin-top: 22px;
+    max-width: var(--prose);
+  }
+
+  .wrap-code {
+    white-space: normal !important;
+    word-break: break-all;
+  }
+
+  .ts {
+    display: grid;
+    gap: 10px;
+    max-width: 84ch;
+  }
+
+  .ts details {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 0 16px;
+  }
+
+  .ts summary {
+    cursor: pointer;
+    padding: 12px 0;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .ts ul {
+    color: var(--text-2);
+    padding-bottom: 6px;
+  }
+
+  pre {
+    white-space: pre;
+  }
+
+  @media print {
+    :global(html[data-print="checklist"] main > :not(.checklist-section)) {
+      display: none !important;
+    }
+
+    .check-group {
+      background: #fff;
+      border-color: #999;
+      color: #000;
+      break-inside: avoid;
+    }
+
+    .check-note,
+    .check-group legend {
+      color: #333;
+    }
+
+    [data-print-checklist] {
+      display: none;
+    }
+
+    .ts details {
+      background: #fff;
+    }
+  }
+</style>

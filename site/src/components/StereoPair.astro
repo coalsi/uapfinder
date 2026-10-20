@@ -1,0 +1,346 @@
+---
+/**
+ * Two nodes working as a pair: a true-to-scale side view (12 km baseline,
+ * object near 10 km altitude) with both fields of view, sight lines, the
+ * exaggerated error wedges and their overlap, plus what each camera sees.
+ * Geometry comes from src/lib/stereo.ts, which the optional animation reuses.
+ * The animation only starts on its own when reduced motion is not requested,
+ * pauses off-screen, and has a pause/play button.
+ */
+import { A, B, BASELINE_KM, fmt, pairGeometry, pt, toSvg, VIEW, type P } from "../lib/stereo";
+
+const S0 = 0.08;
+const g = pairGeometry(S0);
+const sA = toSvg(A);
+const sB = toSvg(B);
+const sO = toSvg(g.object);
+const cone = (o: P) => {
+  const reach = 16;
+  return `M${pt(o)} L${pt([o[0] - reach, reach])} L${pt([o[0] + reach, reach])} Z`;
+};
+const wedge = (o: P, w: [P, P]) => `M${pt(o)} L${pt(w[0])} L${pt(w[1])} Z`;
+const regionPath = `M${g.region.map(pt).join(" L")} Z`;
+
+const stars: [number, number, number][] = [
+  [30, 30, 1.2], [92, 88, 0.9], [176, 22, 1.3], [250, 120, 0.8], [470, 30, 1.1], [560, 100, 1.3],
+  [612, 48, 0.9], [420, 150, 0.8], [40, 210, 0.9], [600, 220, 1], [330, 60, 0.8], [520, 180, 0.7],
+];
+
+// Inset frames (what each camera sees). Same star directions → same pixels in both.
+const FW = 200;
+const FH = 140;
+const insetStars: [number, number, number][] = [
+  [22, 24, 1.3], [58, 102, 1], [96, 36, 1.6], [128, 118, 1.1], [150, 58, 1.2], [182, 20, 0.9], [176, 96, 1.4],
+  [40, 62, 0.8], [112, 82, 0.8], [70, 14, 0.9],
+];
+const OBJ_V = 64; // the object's offset across the baseline is the same in both frames (same height)
+const u = (x: number) => FW / 2 + (x * FW) / 2;
+const insets = [
+  { key: "a", label: "Camera A", x: u(g.imageA) },
+  { key: "b", label: "Camera B", x: u(g.imageB) },
+];
+const disparityPx = Math.round((g.imageA - g.imageB) * 960);
+---
+<figure class="diagram stereo" data-stereo>
+  <div class="stereo-layout">
+  <svg viewBox={`0 0 ${VIEW.width} ${VIEW.height}`} role="img" aria-labelledby="stereo-title stereo-desc" class="stereo-main">
+    <title id="stereo-title">Two nodes 12 km apart triangulating one object</title>
+    <desc id="stereo-desc">
+      Side view, to scale. Node A and node B stand on the ground 12 kilometres (about 7.5 miles) apart, both cameras
+      pointing straight up with a 90 degree field of view. Their fields of view overlap above about 6 kilometres
+      altitude. An object near 10 kilometres altitude sits in the overlap. A sight line runs from each node to the
+      object, each surrounded by a narrow wedge of angular uncertainty, exaggerated for visibility. The small
+      quadrilateral where the two wedges overlap is the position uncertainty. A dashed line drops from the object to
+      the ground to show its altitude.
+    </desc>
+    <defs>
+      <linearGradient id="stereo-ground" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#121c30"></stop>
+        <stop offset="1" stop-color="#0a111e"></stop>
+      </linearGradient>
+      <radialGradient id="stereo-glow">
+        <stop offset="0" stop-color="#ffd27a" stop-opacity="0.55"></stop>
+        <stop offset="1" stop-color="#ffd27a" stop-opacity="0"></stop>
+      </radialGradient>
+    </defs>
+    {stars.map(([x, y, r]) => <circle cx={x} cy={y} r={r} fill="#c9d6ec" opacity="0.6" />)}
+
+    <path d={cone(A)} fill="#8fd0ff" fill-opacity="0.07" stroke="#8fd0ff" stroke-opacity="0.35" stroke-dasharray="4 6"></path>
+    <path d={cone(B)} fill="#8fd0ff" fill-opacity="0.07" stroke="#8fd0ff" stroke-opacity="0.35" stroke-dasharray="4 6"></path>
+
+    <g class="s-label s-label--muted">
+      <text x={toSvg([-2.4, 0])[0]} y={toSvg([0, 4.6])[1]} text-anchor="middle">A's view</text>
+      <text x={toSvg([BASELINE_KM + 2.4, 0])[0]} y={toSvg([0, 4.6])[1]} text-anchor="middle">B's view</text>
+      <text x="200" y="34" text-anchor="middle">overlap</text>
+    </g>
+
+    <path data-s="wedge-a" d={wedge(A, g.wedgeA)} fill="#8fd0ff" fill-opacity="0.16"></path>
+    <path data-s="wedge-b" d={wedge(B, g.wedgeB)} fill="#8fd0ff" fill-opacity="0.16"></path>
+    <line data-s="ray-a" x1={fmt(sA[0])} y1={fmt(sA[1])} x2={fmt(sO[0])} y2={fmt(sO[1])} stroke="#8fd0ff" stroke-width="2" stroke-linecap="round"></line>
+    <line data-s="ray-b" x1={fmt(sB[0])} y1={fmt(sB[1])} x2={fmt(sO[0])} y2={fmt(sO[1])} stroke="#8fd0ff" stroke-width="2" stroke-linecap="round"></line>
+    <line data-s="alt" x1={fmt(sO[0])} y1={fmt(sO[1] + 10)} x2={fmt(sO[0])} y2={VIEW.ground} stroke="#8e9bb2" stroke-width="1.4" stroke-dasharray="5 6"></line>
+
+    <circle data-s="glow" cx={fmt(sO[0])} cy={fmt(sO[1])} r="24" fill="url(#stereo-glow)"></circle>
+    <path data-s="region" d={regionPath} fill="#ffd27a" fill-opacity="0.32" stroke="#ffd27a" stroke-width="1.4" stroke-linejoin="round"></path>
+    <circle data-s="obj" cx={fmt(sO[0])} cy={fmt(sO[1])} r="3.6" fill="#ffd27a"></circle>
+    <g data-s="obj-label" transform={`translate(${fmt(sO[0])} ${fmt(sO[1])})`}>
+      <text class="s-obj" x="14" y="-30">object</text>
+      <text class="s-alt" x="14" y="-9" data-s="alt-text">{`${g.object[1].toFixed(1)} km up`}</text>
+    </g>
+
+    <path d={`M0 ${VIEW.ground} L${VIEW.width} ${VIEW.ground} L${VIEW.width} ${VIEW.height} L0 ${VIEW.height} Z`} fill="url(#stereo-ground)"></path>
+    <path d={`M0 ${VIEW.ground} L${VIEW.width} ${VIEW.ground}`} stroke="#2a3958" stroke-width="1.5"></path>
+    {
+      [sA, sB].map((p) => (
+        <g>
+          <rect x={p[0] - 11} y={p[1] - 1} width="22" height="10" rx="2" fill="#22304d" />
+          <path d={`M${p[0] - 9} ${p[1]} a9 9 0 0 1 18 0 Z`} fill="#8fd0ff" />
+        </g>
+      ))
+    }
+    <g class="s-label">
+      <text x={sA[0]} y={VIEW.ground + 30} text-anchor="middle">Node A</text>
+      <text x={sB[0]} y={VIEW.ground + 30} text-anchor="middle">Node B</text>
+    </g>
+    <g class="s-baseline">
+      <line x1={sA[0] + 44} y1={VIEW.ground + 22} x2={sB[0] - 44} y2={VIEW.ground + 22} stroke="#6f7f9e" stroke-width="1.2"></line>
+      <path d={`M${sA[0] + 52} ${VIEW.ground + 17} L${sA[0] + 44} ${VIEW.ground + 22} L${sA[0] + 52} ${VIEW.ground + 27} M${sB[0] - 52} ${VIEW.ground + 17} L${sB[0] - 44} ${VIEW.ground + 22} L${sB[0] - 52} ${VIEW.ground + 27}`} fill="none" stroke="#6f7f9e" stroke-width="1.2"></path>
+      <rect x={(sA[0] + sB[0]) / 2 - 88} y={VIEW.ground + 9} width="176" height="26" rx="4" fill="#0c1424"></rect>
+      <text x={(sA[0] + sB[0]) / 2} y={VIEW.ground + 29} text-anchor="middle">12 km (7.5 mi)</text>
+    </g>
+  </svg>
+
+  <div class="stereo-insets">
+    {
+      insets.map((i) => (
+        <figure class="inset">
+          <svg
+            viewBox={`0 0 ${FW} ${FH + 26}`}
+            role="img"
+            aria-labelledby={`inset-${i.key}-title`}
+            data-s-inset={i.key}
+          >
+            <title id={`inset-${i.key}-title`}>
+              {`What ${i.label.toLowerCase()} sees: the same stars at the same places, with the object ${i.key === "a" ? "right" : "left"} of centre`}
+            </title>
+            <rect x="0.5" y="0.5" width={FW - 1} height={FH - 1} rx="6" fill="#050911" stroke="#6f7f9e" />
+            {insetStars.map(([x, y, r]) => <circle cx={x} cy={y} r={r} fill="#c9d6ec" />)}
+            <path d={`M${FW / 2 - 8} ${FH / 2} h16 M${FW / 2} ${FH / 2 - 8} v16`} stroke="#6f7f9e" stroke-width="1" />
+            <circle data-s="dot" cx={fmt(i.x)} cy={OBJ_V} r="4" fill="#ffd27a" />
+            <circle data-s="ring" cx={fmt(i.x)} cy={OBJ_V} r="10" fill="none" stroke="#ffd27a" stroke-width="1.4" />
+            <text class="inset-title" x="10" y={FH + 20}>{i.label}</text>
+            <text class="inset-dir" x={FW - 6} y={FH + 20} text-anchor="end">{i.key === "a" ? "toward B →" : "← toward A"}</text>
+          </svg>
+        </figure>
+      ))
+    }
+  </div>
+  </div>
+  <figcaption>
+    <span class="stereo-readout" aria-live="off">
+      Parallax at the object: <strong data-s="parallax">{g.parallaxDeg.toFixed(0)}°</strong>. In a 1920-pixel frame the
+      object sits <strong data-s="disparity">{disparityPx.toLocaleString("en-US")}</strong> pixels further left in B's
+      view than in A's, while every star stays put.
+    </span>
+    Side view to scale, both cameras pointing straight up for simplicity. The error wedges are drawn at
+    {" "}1.4°, about 30–140 times the 0.01–0.05° a star-calibrated node achieves, so they are visible.
+  </figcaption>
+  <p class="stereo-controls">
+    <button type="button" class="btn btn-secondary btn-sm" data-stereo-toggle hidden aria-pressed="false">Play animation</button>
+  </p>
+</figure>
+
+<script>
+  import { pairGeometry, pt, toSvg, fmt } from "../lib/stereo";
+
+  const root = document.querySelector<HTMLElement>("[data-stereo]");
+  const button = root?.querySelector<HTMLButtonElement>("[data-stereo-toggle]");
+  if (root && button) {
+    const q = <T extends Element>(sel: string) => root.querySelector<T>(sel);
+    const el = {
+      wa: q<SVGPathElement>('[data-s="wedge-a"]'),
+      wb: q<SVGPathElement>('[data-s="wedge-b"]'),
+      ra: q<SVGLineElement>('[data-s="ray-a"]'),
+      rb: q<SVGLineElement>('[data-s="ray-b"]'),
+      alt: q<SVGLineElement>('[data-s="alt"]'),
+      glow: q<SVGCircleElement>('[data-s="glow"]'),
+      region: q<SVGPathElement>('[data-s="region"]'),
+      obj: q<SVGCircleElement>('[data-s="obj"]'),
+      label: q<SVGGElement>('[data-s="obj-label"]'),
+      altText: q<SVGTextElement>('[data-s="alt-text"]'),
+      parallax: q<HTMLElement>('[data-s="parallax"]'),
+      disparity: q<HTMLElement>('[data-s="disparity"]'),
+      insetA: q<SVGSVGElement>('[data-s-inset="a"]'),
+      insetB: q<SVGSVGElement>('[data-s-inset="b"]'),
+    };
+    const PERIOD_MS = 18000;
+    const S0 = 0.08;
+    let phase = S0;
+    let playing = false;
+    let visible = true;
+    let last = 0;
+    let raf = 0;
+
+    const setInset = (svg: SVGSVGElement | null, x: number) => {
+      svg?.querySelectorAll<SVGCircleElement>('[data-s="dot"], [data-s="ring"]').forEach((c) => c.setAttribute("cx", fmt(100 + x * 100)));
+    };
+
+    const draw = (s: number) => {
+      const g = pairGeometry(s);
+      const o = toSvg(g.object);
+      el.wa?.setAttribute("d", `M${pt([0, 0])} L${pt(g.wedgeA[0])} L${pt(g.wedgeA[1])} Z`);
+      el.wb?.setAttribute("d", `M${pt([12, 0])} L${pt(g.wedgeB[0])} L${pt(g.wedgeB[1])} Z`);
+      for (const line of [el.ra, el.rb]) {
+        line?.setAttribute("x2", fmt(o[0]));
+        line?.setAttribute("y2", fmt(o[1]));
+      }
+      el.alt?.setAttribute("x1", fmt(o[0]));
+      el.alt?.setAttribute("x2", fmt(o[0]));
+      el.alt?.setAttribute("y1", fmt(o[1] + 10));
+      for (const c of [el.glow, el.obj]) {
+        c?.setAttribute("cx", fmt(o[0]));
+        c?.setAttribute("cy", fmt(o[1]));
+      }
+      el.region?.setAttribute("d", `M${g.region.map(pt).join(" L")} Z`);
+      el.label?.setAttribute("transform", `translate(${fmt(o[0])} ${fmt(o[1])})`);
+      if (el.altText) el.altText.textContent = `${g.object[1].toFixed(1)} km up`;
+      if (el.parallax) el.parallax.textContent = `${g.parallaxDeg.toFixed(0)}°`;
+      if (el.disparity) el.disparity.textContent = Math.round((g.imageA - g.imageB) * 960).toLocaleString("en-US");
+      setInset(el.insetA, g.imageA);
+      setInset(el.insetB, g.imageB);
+    };
+
+    const tick = (now: number) => {
+      if (!playing || !visible) {
+        raf = 0;
+        return;
+      }
+      if (last) phase = (phase + (now - last) / PERIOD_MS) % 1;
+      last = now;
+      draw(phase);
+      raf = requestAnimationFrame(tick);
+    };
+    const start = () => {
+      if (!raf && playing && visible) {
+        last = 0;
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    const setPlaying = (on: boolean) => {
+      playing = on;
+      button.textContent = on ? "Pause animation" : "Play animation";
+      button.setAttribute("aria-pressed", String(on));
+      if (on) start();
+    };
+
+    button.hidden = false;
+    button.addEventListener("click", () => setPlaying(!playing));
+    new IntersectionObserver((entries) => {
+      visible = entries.some((e) => e.isIntersecting);
+      start();
+    }).observe(root);
+    // Start on its own only when the visitor has not asked for reduced motion.
+    setPlaying(window.matchMedia("(prefers-reduced-motion: no-preference)").matches);
+  }
+</script>
+
+<style>
+  .stereo-main {
+    background:
+      radial-gradient(90% 80% at 50% 0%, rgb(92 184 255 / 0.08), transparent 70%),
+      var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .s-label text,
+  .s-baseline text {
+    fill: var(--text-2);
+    font-family: var(--font-sans);
+    font-size: 21px;
+    font-weight: 500;
+  }
+
+  .s-label--muted text {
+    fill: var(--muted);
+    font-size: 19px;
+  }
+
+  .s-obj {
+    fill: var(--star);
+    font-family: var(--font-sans);
+    font-size: 21px;
+    font-weight: 600;
+  }
+
+  .s-alt {
+    fill: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 18px;
+  }
+
+  .stereo-insets {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  @media (min-width: 960px) {
+    .stereo-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .stereo-insets {
+      grid-template-columns: 1fr;
+      margin-top: 0;
+    }
+  }
+
+  .inset {
+    margin: 0;
+  }
+
+  .inset svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .inset-title {
+    fill: var(--text);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .inset-dir {
+    fill: var(--muted);
+    font-family: var(--font-sans);
+    font-size: 13px;
+  }
+
+  .stereo-readout {
+    display: block;
+    color: var(--text-2);
+    font-size: 0.95rem;
+    margin-bottom: 6px;
+  }
+
+  .stereo-readout strong {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stereo-controls {
+    margin: 10px 0 0;
+  }
+
+  .btn-sm {
+    min-height: 38px;
+    padding: 0.4em 1em;
+    font-size: 0.95rem;
+  }
+</style>

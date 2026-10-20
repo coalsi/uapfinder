@@ -1,9 +1,9 @@
 ---
 import Base from "../layouts/Base.astro";
-import { downloads, links, REPO_URL, sitePath } from "../config";
+import { downloads, links, NODE_IMAGE_NAME, nvidia, REPO_URL, sitePath } from "../config";
 
 const description =
-  "Download the UAP Finder software and set it up: the camera node for a Jetson Orin Nano, the server on a Mac or Linux machine, and a simulator to try it without hardware.";
+  "Download the UAP Finder software: the ready-to-flash node system image for a Jetson Orin Nano, the source code, the server for a Mac or Linux machine, and a simulator to try it without hardware.";
 
 interface Part {
   path: string;
@@ -61,9 +61,7 @@ const contents: Part[] = [
 const nodeInstall = `sudo apt-get update && sudo apt-get install -y git
 git clone ${REPO_URL}.git
 cd uapfinder
-sudo SKYNET_NODE_ID=<your node id> SKYNET_NODE_KEY=<your node key> \\
-     SKYNET_SERVER_HOST=<server host name> TS_AUTHKEY=<Tailscale key, if used> \\
-     ./edge/deploy/jetson/setup.sh`;
+sudo ./edge/deploy/jetson/setup.sh`;
 
 const nodeCheck = `journalctl -u skynet-edge -f        # live status, a line every minute
 sudo -u skynet /opt/skynet/venv/bin/skynet-edge bench --config /etc/skynet/edge.yaml`;
@@ -96,11 +94,12 @@ export SKYNET_PUBLIC_URL=http://127.0.0.1:8000
       <p class="eyebrow">Download</p>
       <h1>Get the software</h1>
       <p class="lead">
-        Everything UAP Finder runs is in one open repository: the camera-node software, the server that triangulates,
-        the live map and this website. Download it, then follow the steps for your role.
+        Node hosts need one file: the UAP Finder system image, written to a microSD card. Everything else UAP Finder
+        runs, from the server that triangulates to the live map and this website, is in one open repository.
       </p>
       <div class="btn-row">
-        <a class="btn btn-primary" href={downloads.zip} data-download="zip">Download ZIP</a>
+        <a class="btn btn-primary" href={downloads.nodeImage}>Get the node image</a>
+        <a class="btn btn-secondary" href={downloads.zip} data-download="zip">Download source ZIP</a>
         <a class="btn btn-secondary" href={REPO_URL}>View on GitHub</a>
       </div>
       <p class="small muted alt-downloads">
@@ -109,8 +108,8 @@ export SKYNET_PUBLIC_URL=http://127.0.0.1:8000
       </p>
       <nav aria-label="On this page">
         <ul class="toc">
+          <li><a href="#node">Node image</a></li>
           <li><a href="#contents">What's inside</a></li>
-          <li><a href="#node">Set up a node</a></li>
           <li><a href="#server">Run the server</a></li>
           <li><a href="#try">Try it without hardware</a></li>
           <li><a href="#requirements">Requirements</a></li>
@@ -125,11 +124,89 @@ export SKYNET_PUBLIC_URL=http://127.0.0.1:8000
       <div class="callout callout--warn">
         <p>
           <strong>Early software.</strong> It is built and tested in simulation, and the server has been run end to
-          end with a simulated network. The camera, GPS, orientation-sensor and Jetson image steps were written from
-          the manufacturers' documentation and have not yet been run on a real device. Expect some troubleshooting, and
+          end with a simulated network. The node system image is new: it is built and tested automatically, but has
+          not yet been booted on a real Orin Nano, and the camera, GPS and orientation-sensor code follows the
+          manufacturers' documentation without having run on a real device yet. Expect some troubleshooting, and
           please <a href={links.issues}>report what you find</a>.
         </p>
       </div>
+    </div>
+  </section>
+
+  <section id="node" class="section anchor-section" aria-labelledby="node-title">
+    <div class="wrap split split--wide-left split--top">
+      <div>
+        <h2 id="node-title">Set up a camera node</h2>
+        <p>
+          For hosts with a Jetson Orin Nano developer kit, a camera and a GPS receiver. The node runs from a
+          ready-made system image: flash it, plug the parts together and finish setup from your phone.
+        </p>
+        <ol class="steps">
+          <li>
+            <h3>Download the image</h3>
+            <p>
+              From the <a href={downloads.nodeImage}>latest release</a>, download
+              <code class="wrap-code">{NODE_IMAGE_NAME}</code> (under 2 GB) and its SHA-256 checksum.
+            </p>
+          </li>
+          <li>
+            <h3>Write it to a microSD card</h3>
+            <p>
+              Use <a href="https://etcher.balena.io/">balenaEtcher</a> and a 64 GB or larger A2 card. Etcher reads the
+              compressed <code>.img.xz</code> directly and verifies the card afterwards.
+            </p>
+          </li>
+          <li>
+            <h3>Follow the build guide</h3>
+            <p>
+              The <a href={sitePath("/build/")}>step-by-step guide</a> covers the one-time firmware check for new
+              developer kits, the wiring, the enclosure, and claiming the node with the code from your network
+              coordinator.
+            </p>
+          </li>
+        </ol>
+        <p class="btn-row">
+          <a class="btn btn-primary" href={downloads.nodeImage}>Get the node image</a>
+          <a class="btn btn-secondary" href={sitePath("/build/")}>Build guide</a>
+        </p>
+        <div class="callout callout--warn">
+          <p>
+            <strong>New, not yet hardware-tested.</strong> Booting the image on a real Orin Nano, the CSI camera setup,
+            PPS on pin 7 and the Wi-Fi hotspot still need to be confirmed on a real device.
+          </p>
+        </div>
+
+        <h3 id="command-line">Alternative: the command-line installer</h3>
+        <p>
+          Already running NVIDIA JetPack 6? The installer produces the same system as the image, including the setup
+          page. On the Jetson, in a terminal:
+        </p>
+        <pre tabindex="0"><code>{nodeInstall}</code></pre>
+        <p class="small muted">
+          Then claim the node at <code>http://uapfinder.local</code> as in the
+          <a href={sitePath("/build/#setup")}>build guide</a>. To check the detection pipeline from a terminal:
+        </p>
+        <pre tabindex="0"><code>{nodeCheck}</code></pre>
+        <p class="small muted">Options and configuration are in the <a href={links.edgeGuide}>edge guide</a>.</p>
+      </div>
+      <aside class="card" aria-labelledby="image-contents-title">
+        <h3 id="image-contents-title">What's on the image</h3>
+        <ul>
+          <li>NVIDIA Jetson Linux R36.5.2 (JetPack 6.2.3, Ubuntu 22.04) for the Orin Nano developer kit, with NVIDIA's camera, GStreamer and multimedia stack. No desktop.</li>
+          <li>The UAP Finder node software and its automatic star calibration.</li>
+          <li>The setup and status page at <code>http://uapfinder.local</code>, and a Wi-Fi hotspot for setup without a network.</li>
+          <li>GPS time with gpsd and chrony, set up for PPS on header pin 7; the IMX477 camera set up on CAM0.</li>
+          <li>Tailscale, readsb for an ADS-B receiver, ffmpeg.</li>
+          <li>SSH stays off until you set the device password.</li>
+        </ul>
+        <h3 class="files-title">Files you'll use</h3>
+        <ul>
+          <li><a href={sitePath("/build/")}>Build guide</a> and <a href={sitePath("/device/")}>how the node works</a></li>
+          <li><a href={links.edgeGuide}>Edge guide</a>: software, configuration and checks</li>
+          <li><a href={links.jetsonImageGuide}>Image guide</a>: how the image is built</li>
+          <li><a href={links.jetsonSetupScript}>Setup script</a></li>
+        </ul>
+      </aside>
     </div>
   </section>
 
@@ -164,84 +241,6 @@ export SKYNET_PUBLIC_URL=http://127.0.0.1:8000
           </tbody>
         </table>
       </div>
-    </div>
-  </section>
-
-  <section id="node" class="section anchor-section" aria-labelledby="node-title">
-    <div class="wrap split split--wide-left split--top">
-      <div>
-        <h2 id="node-title">Set up a camera node</h2>
-        <p>
-          For hosts with a Jetson Orin Nano developer kit, a camera and a GPS receiver. The full walkthrough, wiring
-          and calibration are in the <a href={links.edgeGuide}>edge guide</a>.
-        </p>
-        <ol class="steps">
-          <li>
-            <h3>Check the parts and your spacing</h3>
-            <p>
-              Use the <a href={sitePath("/host/#cost")}>parts list</a>, and
-              <a href={sitePath("/get-involved/#signup")}>register your interest</a> so your node will have a stereo
-              partner 5–40 miles away.
-            </p>
-          </li>
-          <li>
-            <h3>Update the board's firmware, once</h3>
-            <p>
-              A factory-fresh developer kit cannot boot JetPack 6 until its firmware is updated. Write NVIDIA's
-              JetPack 5.1.3 SD-card image with Etcher, boot it once to update the firmware, then continue.
-              <a href={links.jetsonImageGuide}>Image guide</a>.
-            </p>
-          </li>
-          <li>
-            <h3>Install JetPack 6.2</h3>
-            <p>
-              Write NVIDIA's JetPack 6.2 SD-card image for the Orin Nano developer kit, boot it and finish Ubuntu's
-              first-run setup. JetPack 6.2 also enables the faster "Super" power modes.
-            </p>
-          </li>
-          <li>
-            <h3>Get your node ID and key</h3>
-            <p>
-              The network coordinator registers your node and sends you a node ID and key, plus a Tailscale key if the
-              network uses Tailscale. Keep the node key private.
-            </p>
-          </li>
-          <li>
-            <h3>Download and install the node software</h3>
-            <p>On the Jetson, in a terminal:</p>
-          </li>
-        </ol>
-        <pre tabindex="0"><code>{nodeInstall}</code></pre>
-        <p class="small muted">
-          The script installs GPS time sync (gpsd, chrony), video tools, a <code>skynet</code> service account and the
-          node software, writes <code>/etc/skynet/edge.yaml</code> and starts the <code>skynet-edge</code> service.
-        </p>
-        <ol class="steps" start="6" style="counter-reset: step 5">
-          <li>
-            <h3>Configure and calibrate</h3>
-            <p>
-              Edit <code>/etc/skynet/edge.yaml</code> for your camera, GPS and ADS-B source, then calibrate the lens and
-              solve the camera's pointing from the stars on a clear night.
-              <a href={`${links.edgeGuide}#calibration`}>Calibration steps</a>.
-            </p>
-          </li>
-          <li>
-            <h3>Check that it works</h3>
-            <p>Watch the service and run the on-device benchmark (it must sustain 60 fps at 1080p):</p>
-          </li>
-        </ol>
-        <pre tabindex="0"><code>{nodeCheck}</code></pre>
-        <p class="small muted">Once it is sending heartbeats, your node appears on the <a href={links.map}>live map</a>.</p>
-      </div>
-      <aside class="card" aria-labelledby="node-files-title">
-        <h3 id="node-files-title">Files you'll use</h3>
-        <ul>
-          <li><a href={links.edgeGuide}>Edge guide</a>: install, configuration, calibration and checks</li>
-          <li><a href={links.exampleConfig}>Example configuration</a></li>
-          <li><a href={links.jetsonImageGuide}>Jetson image guide</a>: SD card and custom images</li>
-          <li><a href={`${REPO_URL}/blob/HEAD/edge/deploy/jetson/setup.sh`}>Setup script</a></li>
-        </ul>
-      </aside>
     </div>
   </section>
 
@@ -316,7 +315,7 @@ export SKYNET_PUBLIC_URL=http://127.0.0.1:8000
             <tr>
               <th scope="row">Camera node</th>
               <td data-label="Runs on">Jetson Orin Nano 8 GB developer kit</td>
-              <td data-label="Needs">JetPack 6.x (Ubuntu 22.04, Python 3.10), NVMe SSD, camera, GPS with PPS</td>
+              <td data-label="Needs">The UAP Finder image on a 64 GB+ microSD card (or JetPack 6.x with the command-line installer), camera, GPS with PPS; NVMe SSD recommended</td>
             </tr>
             <tr>
               <th scope="row">Server</th>
@@ -348,13 +347,13 @@ export SKYNET_PUBLIC_URL=http://127.0.0.1:8000
       <div class="grid grid-3">
         <article class="card">
           <h3>NVIDIA JetPack</h3>
-          <p>The Jetson's operating system, including the SD-card images for the Orin Nano developer kit.</p>
-          <p><a href="https://developer.nvidia.com/embedded/jetpack">JetPack downloads</a> ·
-            <a href="https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit">Getting started</a></p>
+          <p>Only needed for the one-time firmware update of older developer kits (the JetPack 5.1.3 SD-card image) or for the command-line install.</p>
+          <p><a href={nvidia.jetpack}>JetPack downloads</a> ·
+            <a href={nvidia.gettingStarted}>Getting started</a></p>
         </article>
         <article class="card">
           <h3>balenaEtcher</h3>
-          <p>Writes the JetPack image to a microSD card from macOS, Windows or Linux.</p>
+          <p>Writes the UAP Finder image (and, if needed, NVIDIA's firmware-update image) to a microSD card from macOS, Windows or Linux.</p>
           <p><a href="https://etcher.balena.io/">Download Etcher</a></p>
         </article>
         <article class="card">
@@ -399,5 +398,14 @@ export SKYNET_PUBLIC_URL=http://127.0.0.1:8000
 
   pre {
     white-space: pre;
+  }
+
+  .wrap-code {
+    white-space: normal !important;
+    word-break: break-all;
+  }
+
+  .files-title {
+    margin-top: 1.2em;
   }
 </style>

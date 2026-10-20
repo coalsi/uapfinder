@@ -57,6 +57,8 @@ export const links = {
   apiDoc: blob("docs/API.md"),
   edgeGuide: blob("edge/README.md"),
   jetsonImageGuide: blob("edge/deploy/image/README.md"),
+  jetsonSetupScript: blob("edge/deploy/jetson/setup.sh"),
+  applianceDoc: blob("docs/NODE_APPLIANCE.md"),
   macStudioGuide: blob("deploy/mac-studio/README.md"),
   serverGuide: blob("server/README.md"),
   exampleConfig: blob("edge/config/example.yaml"),
@@ -71,6 +73,17 @@ export const downloads = {
   zip: `${REPO_URL}/archive/${REPO_REF}.zip`,
   tarball: `${REPO_URL}/archive/${REPO_REF}.tar.gz`,
   clone: `git clone ${REPO_URL}.git`,
+  /** The flashable node OS image (uapfinder-node-<version>-orin-nano.img.xz) and its SHA-256. */
+  nodeImage: `${REPO_URL}/releases/latest`,
+} as const;
+
+/** File name pattern of the node OS image on the releases page. */
+export const NODE_IMAGE_NAME = "uapfinder-node-<version>-orin-nano.img.xz";
+
+/** NVIDIA's own pages the build guide relies on. */
+export const nvidia = {
+  gettingStarted: "https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit",
+  jetpack: "https://developer.nvidia.com/embedded/jetpack",
 } as const;
 
 /** "Prices as of" month for the hardware list (update with the prices). */

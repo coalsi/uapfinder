@@ -1,0 +1,329 @@
+---
+/**
+ * An illustrated mock of the node's setup and status page (port 80,
+ * http://uapfinder.local) on a phone, following docs/NODE_APPLIANCE.md. It is
+ * a picture, not the real page: exposed as one image with a text alternative.
+ */
+interface Props {
+  screen: "claim" | "status";
+}
+const { screen } = Astro.props;
+const label =
+  screen === "claim"
+    ? "Illustration of the setup page before the node is claimed: step 1, network, connected by Ethernet; step 2, a box for the claim code, filled in with an example code 7KQ2-M9XD; step 3, a device password; and a Claim this node button."
+    : "Illustration of the node's status page: a live sky preview with a horizon line and an elevation reading for aiming, then a list: camera found, GPS 3D fix with 11 satellites, PPS locked, time error 0.004 milliseconds, orientation sensor not fitted, ADS-B receiver found, NVMe storage, server connected, pointing waiting for a clear night, and the software version; with restart, shut down and diagnostics buttons.";
+---
+<figure class="phone-fig">
+  <div class="phone" role="img" aria-label={label}>
+    <div class="screen">
+      <div class="bar"><span>uapfinder.local</span></div>
+      <div class="app">
+        <p class="app-head"><span class="dot" aria-hidden="true"></span> UAP Finder node <span class="host">uapfinder-7c3e</span></p>
+        {
+          screen === "claim" ? (
+            <>
+              <ol class="m-steps">
+                <li class="done">
+                  <b>Network</b>
+                  <span class="ok">Connected (Ethernet)</span>
+                </li>
+                <li>
+                  <b>Claim code</b>
+                  <span class="field mono">7KQ2-M9XD</span>
+                  <span class="hint">From your network coordinator</span>
+                </li>
+                <li>
+                  <b>Device password</b>
+                  <span class="field">••••••••••••</span>
+                </li>
+              </ol>
+              <span class="m-btn">Claim this node</span>
+            </>
+          ) : (
+            <>
+              <div class="preview">
+                <span class="horizon" />
+                <span class="star s1" />
+                <span class="star s2" />
+                <span class="star s3" />
+                <span class="star s4" />
+                <span class="elev mono">centre 72° up</span>
+                <span class="live mono">LIVE · 1 fps</span>
+              </div>
+              <ul class="m-status">
+                <li><span>Camera</span><span class="ok">IMX477 found</span></li>
+                <li><span>GPS</span><span class="ok">3D fix · 11 sats</span></li>
+                <li><span>PPS</span><span class="ok">locked</span></li>
+                <li><span>Time error</span><span class="ok mono">0.004 ms</span></li>
+                <li><span>Orientation</span><span class="na">not fitted</span></li>
+                <li><span>ADS-B</span><span class="ok">receiver found</span></li>
+                <li><span>Storage</span><span class="ok">NVMe 512 GB</span></li>
+                <li><span>Server</span><span class="ok">connected</span></li>
+                <li><span>Pointing</span><span class="wait">waiting for a clear night</span></li>
+                <li><span>Software</span><span class="mono">0.2.0</span></li>
+              </ul>
+              <div class="m-actions">
+                <span>Restart</span>
+                <span>Shut down</span>
+                <span>Diagnostics</span>
+              </div>
+            </>
+          )
+        }
+      </div>
+    </div>
+  </div>
+  <figcaption>
+    <span class="badge">Illustration</span> {screen === "claim" ? "Before enrollment." : "Status, after enrollment."} Mock-up,
+    example values; the real page may differ.
+  </figcaption>
+</figure>
+
+<style>
+  .phone-fig {
+    margin: 0;
+    display: grid;
+    justify-items: center;
+    gap: 10px;
+  }
+
+  .phone-fig figcaption {
+    text-align: center;
+    max-width: 30ch;
+    margin: 0;
+  }
+
+  .phone {
+    width: min(100%, 290px);
+    border-radius: 38px;
+    padding: 10px;
+    background: linear-gradient(160deg, #2a3958, #141f35);
+    box-shadow:
+      0 0 0 1px #6f7f9e inset,
+      0 20px 50px rgb(0 0 0 / 0.45);
+  }
+
+  .screen {
+    border-radius: 30px;
+    background: #f4f6fa;
+    color: #18202e;
+    overflow: hidden;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.35;
+  }
+
+  .bar {
+    background: #e3e7ef;
+    padding: 18px 14px 8px;
+    text-align: center;
+  }
+
+  .bar span {
+    display: inline-block;
+    background: #fff;
+    border-radius: 999px;
+    padding: 3px 14px;
+    font-size: 11.5px;
+    color: #39445a;
+  }
+
+  .app {
+    padding: 14px 14px 18px;
+  }
+
+  .app-head {
+    margin: 0 0 12px;
+    font-weight: 700;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .host {
+    font-weight: 500;
+    color: #5a6478;
+    font-size: 12px;
+  }
+
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #1e9e5a;
+  }
+
+  .mono {
+    font-family: var(--font-mono);
+  }
+
+  .m-steps {
+    list-style: none;
+    margin: 0 0 14px;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+    counter-reset: m;
+  }
+
+  .m-steps li {
+    margin: 0;
+    counter-increment: m;
+    background: #fff;
+    border: 1px solid #d5dae4;
+    border-radius: 12px;
+    padding: 10px 12px 10px 40px;
+    position: relative;
+    display: grid;
+    gap: 4px;
+  }
+
+  .m-steps li::before {
+    content: counter(m);
+    position: absolute;
+    left: 10px;
+    top: 9px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #18202e;
+    color: #fff;
+    font-size: 11px;
+    display: grid;
+    place-items: center;
+  }
+
+  .m-steps li.done::before {
+    content: "✓";
+    background: #1e9e5a;
+  }
+
+  .field {
+    display: block;
+    border: 1.5px solid #8c96aa;
+    border-radius: 8px;
+    padding: 6px 9px;
+    background: #fbfcfe;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+  }
+
+  .hint {
+    color: #5a6478;
+    font-size: 11.5px;
+  }
+
+  .m-btn {
+    display: block;
+    text-align: center;
+    background: #18406e;
+    color: #fff;
+    border-radius: 999px;
+    padding: 10px;
+    font-weight: 700;
+  }
+
+  .ok {
+    color: #12723f;
+    font-weight: 600;
+  }
+
+  .na {
+    color: #5a6478;
+  }
+
+  .wait {
+    color: #8a5300;
+    font-weight: 600;
+    text-align: right;
+  }
+
+  .preview {
+    position: relative;
+    height: 132px;
+    border-radius: 10px;
+    background: linear-gradient(#0b1630, #1d2f52 70%, #33415c);
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+
+  .horizon {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 22px;
+    border-top: 1.5px dashed #ffd27a;
+  }
+
+  .star {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  .s1 { left: 22%; top: 20%; }
+  .s2 { left: 64%; top: 30%; }
+  .s3 { left: 44%; top: 12%; }
+  .s4 { left: 80%; top: 52%; }
+
+  .elev {
+    position: absolute;
+    left: 8px;
+    bottom: 4px;
+    color: #ffd27a;
+    font-size: 10.5px;
+  }
+
+  .live {
+    position: absolute;
+    right: 8px;
+    top: 6px;
+    color: #e8edf6;
+    font-size: 10px;
+    background: rgb(0 0 0 / 0.35);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+
+  .m-status {
+    list-style: none;
+    margin: 0 0 12px;
+    padding: 0;
+    background: #fff;
+    border: 1px solid #d5dae4;
+    border-radius: 12px;
+  }
+
+  .m-status li {
+    margin: 0;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 12px;
+    border-bottom: 1px solid #e6e9f0;
+  }
+
+  .m-status li:last-child {
+    border-bottom: 0;
+  }
+
+  .m-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .m-actions span {
+    flex: 1;
+    text-align: center;
+    border: 1px solid #8c96aa;
+    border-radius: 999px;
+    padding: 6px 2px;
+    font-size: 10.5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+</style>

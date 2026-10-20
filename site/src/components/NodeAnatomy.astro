@@ -1,0 +1,255 @@
+---
+/**
+ * Labelled cutaway of a finished node. Numbered markers are explained in an
+ * HTML legend (readable on phones); the drawing is schematic, not to scale.
+ */
+interface Props {
+  id?: string;
+}
+const { id = "node-anatomy" } = Astro.props;
+
+type M = [number, number, string];
+// Marker positions (circle centres) and what they point at.
+const markers: M[] = [
+  [214, 150, "1"],
+  [258, 196, "2"],
+  [196, 214, "3"],
+  [404, 262, "4"],
+  [470, 212, "5"],
+  [482, 312, "6"],
+  [150, 330, "7"],
+  [150, 420, "8"],
+  [424, 360, "9"],
+  [600, 160, "10"],
+  [122, 268, "11"],
+  [234, 528, "12"],
+  [404, 528, "13"],
+  [362, 600, "14"],
+];
+// Leader lines: from marker to target point.
+const leaders: [number, number, number, number][] = [
+  [226, 156, 262, 176], // dome
+  [270, 200, 304, 206], // lens
+  [208, 220, 244, 226], // heater
+  [392, 262, 376, 262], // IMU
+  [470, 226, 456, 240], // GPS antenna
+  [470, 312, 456, 312], // GPS module
+  [163, 334, 210, 352], // Jetson
+  [163, 420, 232, 403], // SSD
+  [424, 374, 424, 390], // ADS-B dongle
+  [586, 166, 566, 182], // ADS-B antenna
+  [134, 268, 150, 268], // enclosure
+  [234, 514, 234, 496], // glands
+  [404, 514, 404, 494], // vent
+  [350, 596, 334, 584], // mount
+];
+const titleId = `${id}-title`;
+const descId = `${id}-desc`;
+---
+<figure class="diagram anatomy">
+  <div class="anatomy-grid">
+  <svg viewBox="0 0 640 640" role="img" aria-labelledby={`${titleId} ${descId}`}>
+    <title id={titleId}>Cutaway of a finished UAP Finder node</title>
+    <desc id={descId}>
+      A weatherproof box on a rigid pole. On top, a clear dome with a dew-heater ring around its base covers the
+      camera, which points up through the dome with a wide-angle lens; an optional orientation sensor is fixed to the
+      camera bracket. Under the lid are the GPS antenna and the GPS module. Lower down sits the Jetson Orin Nano
+      developer kit with its heatsink and fan, an NVMe SSD on the underside of its carrier board and an optional
+      ADS-B USB receiver, connected to an external antenna beside the box. Cable glands in the bottom let in power,
+      Ethernet and the antenna cable, next to a breather vent. Numbered markers match the list below the drawing.
+    </desc>
+    <defs>
+      <linearGradient id={`${id}-dome`} x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#8fd0ff" stop-opacity="0.22"></stop>
+        <stop offset="1" stop-color="#8fd0ff" stop-opacity="0.04"></stop>
+      </linearGradient>
+      <linearGradient id={`${id}-box`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#18243d"></stop>
+        <stop offset="1" stop-color="#101a2d"></stop>
+      </linearGradient>
+    </defs>
+
+    <!-- field of view -->
+    <path d="M320 186 L182 48 M320 186 L458 48" stroke="#8fd0ff" stroke-opacity="0.45" stroke-width="1.4" stroke-dasharray="5 6" fill="none"></path>
+    <path d="M286 152 A48 48 0 0 1 354 152" stroke="#8fd0ff" stroke-opacity="0.6" stroke-width="1.2" fill="none"></path>
+    <text class="a-note" x="320" y="128" text-anchor="middle">≈ 90°</text>
+
+    <!-- ADS-B antenna and arm -->
+    <line x1="552" y1="170" x2="552" y2="330" stroke="#b6c2d6" stroke-width="5" stroke-linecap="round"></line>
+    <rect x="544" y="326" width="16" height="22" rx="3" fill="#22304d" stroke="#6f7f9e"></rect>
+    <path d="M514 360 L552 360 L552 348" stroke="#6f7f9e" stroke-width="4" fill="none"></path>
+    <path d="M552 348 C 552 470, 470 520, 452 500" stroke="#d0a3ff" stroke-width="2.4" fill="none"></path>
+
+    <!-- enclosure -->
+    <rect x="150" y="236" width="364" height="256" rx="14" fill={`url(#${id}-box)`} stroke="#6f7f9e" stroke-width="2"></rect>
+    <line x1="150" y1="250" x2="514" y2="250" stroke="#6f7f9e" stroke-width="1.2" opacity="0.6"></line>
+
+    <!-- dome and heater ring -->
+    <path d="M236 238 A84 84 0 0 1 404 238 Z" fill={`url(#${id}-dome)`} stroke="#8fd0ff" stroke-width="2"></path>
+    <path d="M250 214 Q 270 196 300 180" stroke="#e8edf6" stroke-opacity="0.35" stroke-width="3" fill="none" stroke-linecap="round"></path>
+    <rect x="232" y="228" width="176" height="10" rx="3" fill="#ffcb6b" opacity="0.85"></rect>
+    <path d="M240 233 h160" stroke="#a5621f" stroke-width="1.2" stroke-dasharray="3 4"></path>
+
+    <!-- camera bracket, camera and lens -->
+    <rect x="246" y="250" width="148" height="8" rx="2" fill="#6f7f9e"></rect>
+    <rect x="292" y="232" width="56" height="18" rx="2" fill="#2a3958" stroke="#8fd0ff" stroke-width="1.2"></rect>
+    <rect x="304" y="192" width="32" height="40" rx="3" fill="#22304d" stroke="#8fd0ff" stroke-width="1.4"></rect>
+    <rect x="300" y="186" width="40" height="8" rx="2" fill="#8fd0ff"></rect>
+    <!-- orientation sensor on the bracket -->
+    <rect x="354" y="256" width="22" height="12" rx="2" fill="#141f35" stroke="#ffd27a" stroke-width="1.2" stroke-dasharray="3 2"></rect>
+
+    <!-- GPS antenna and module -->
+    <rect x="420" y="240" width="44" height="12" rx="3" fill="#7fe3ae" opacity="0.9"></rect>
+    <path d="M442 252 C 442 270, 452 280, 452 300" stroke="#7fe3ae" stroke-width="1.6" fill="none"></path>
+    <rect x="420" y="300" width="36" height="24" rx="2" fill="#123327" stroke="#7fe3ae" stroke-width="1.4"></rect>
+    <circle cx="430" cy="312" r="3" fill="#7fe3ae"></circle>
+    <!-- GPS wires to the 40-pin header -->
+    <path d="M420 318 C 380 330, 360 334, 344 348" stroke="#7fe3ae" stroke-width="1.6" fill="none" stroke-dasharray="1 0"></path>
+
+    <!-- camera ribbon -->
+    <path d="M300 250 C 250 280, 206 316, 206 362" stroke="#e8edf6" stroke-opacity="0.7" stroke-width="4" fill="none"></path>
+    <rect x="198" y="358" width="18" height="6" rx="1" fill="#b6c2d6"></rect>
+
+    <!-- Jetson: heatsink, fan, module, carrier board -->
+    <rect x="222" y="352" width="128" height="10" rx="2" fill="#2a3958"></rect>
+    {Array.from({ length: 11 }, (_, i) => <rect x={226 + i * 11.4} y="336" width="5" height="16" fill="#6f7f9e" />)}
+    <rect x="252" y="330" width="68" height="6" rx="2" fill="#8e9bb2"></rect>
+    <rect x="196" y="364" width="196" height="16" rx="2" fill="#1f5f3a" stroke="#7fe3ae" stroke-opacity="0.5"></rect>
+    <rect x="200" y="380" width="188" height="12" rx="2" fill="#174a2d"></rect>
+    <!-- header pins -->
+    {Array.from({ length: 6 }, (_, i) => <rect x={336 + i * 5} y="356" width="2.4" height="8" fill="#ffd27a" />)}
+    <!-- ports on the left edge -->
+    <rect x="186" y="366" width="14" height="12" rx="1" fill="#b6c2d6"></rect>
+    <rect x="186" y="381" width="14" height="10" rx="1" fill="#8e9bb2"></rect>
+    <!-- NVMe under the carrier -->
+    <rect x="214" y="394" width="104" height="9" rx="2" fill="#5cb8ff"></rect>
+    <!-- ADS-B dongle -->
+    <rect x="392" y="382" width="40" height="12" rx="3" fill="#d0a3ff"></rect>
+    <path d="M432 388 C 446 390, 452 420, 452 496" stroke="#d0a3ff" stroke-width="2.4" fill="none"></path>
+
+    <!-- standoffs -->
+    <rect x="212" y="404" width="6" height="82" fill="#22304d"></rect>
+    <rect x="372" y="404" width="6" height="82" fill="#22304d"></rect>
+
+    <!-- power and Ethernet cables in through glands -->
+    <path d="M186 372 C 170 380, 170 440, 214 470 L 214 500" stroke="#ffcb6b" stroke-width="3" fill="none"></path>
+    <path d="M186 386 C 176 400, 180 440, 254 470 L 254 500" stroke="#8fd0ff" stroke-width="3" fill="none"></path>
+    {[214, 254, 452].map((x) => <path d={`M${x - 11} 490 h22 v10 l-4 10 h-14 l-4 -10 Z`} fill="#6f7f9e" />)}
+    <!-- drip loops outside -->
+    <path d="M214 510 C 214 560, 150 560, 120 530" stroke="#ffcb6b" stroke-width="3" fill="none"></path>
+    <path d="M254 510 C 254 572, 150 580, 104 548" stroke="#8fd0ff" stroke-width="3" fill="none"></path>
+    <!-- vent -->
+    <rect x="394" y="488" width="20" height="8" rx="2" fill="#b6c2d6"></rect>
+
+    <!-- mount -->
+    <rect x="296" y="492" width="48" height="16" rx="3" fill="#6f7f9e"></rect>
+    <rect x="308" y="508" width="24" height="132" fill="#8e9bb2"></rect>
+
+    <g class="a-cable-labels">
+      <text x="112" y="528" text-anchor="end">power</text>
+      <text x="96" y="566" text-anchor="end">Ethernet</text>
+    </g>
+
+    {leaders.map(([x1, y1, x2, y2]) => <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#ffd27a" stroke-width="1.2" />)}
+    {
+      markers.map(([x, y, n]) => (
+        <g class="a-marker">
+          <circle cx={x} cy={y} r="13" />
+          <text x={x} y={y + 5.5} text-anchor="middle">
+            {n}
+          </text>
+        </g>
+      ))
+    }
+  </svg>
+  <ol class="a-legend">
+    <li><strong>Clear dome.</strong> Acrylic, about 100 mm across; keeps rain off the lens while the camera sees the sky.</li>
+    <li><strong>Camera and lens.</strong> A 12.3 MP IMX477 camera run at 1920 × 1080, 60 frames per second, with a wide lens (about 90° across), focused at infinity.</li>
+    <li><strong>Dew heater.</strong> A small heater ring that keeps the dome a little warmer than the air so it does not fog or frost.</li>
+    <li><strong>Orientation sensor</strong> <span class="badge">optional</span> A BNO055 fixed to the camera bracket. It notices if the mount moves; the stars give the actual pointing.</li>
+    <li><strong>GPS antenna.</strong> Active antenna under the lid (or outside), for a reliable fix.</li>
+    <li><strong>GPS module with PPS.</strong> Wired to the computer's 40-pin header: position, and a pulse at the start of every second for precise time.</li>
+    <li><strong>Jetson Orin Nano developer kit.</strong> The computer: module with heatsink and fan on a carrier board. The UAP Finder system runs from a microSD card in the slot under the module.</li>
+    <li><strong>NVMe SSD</strong> <span class="badge">recommended</span> In the M.2 slot under the carrier board; holds clips and calibration.</li>
+    <li><strong>ADS-B receiver</strong> <span class="badge">optional</span> A USB radio that hears aircraft broadcasting their own positions.</li>
+    <li><strong>ADS-B antenna</strong> <span class="badge">optional</span> A 1090 MHz antenna outside the box, connected by coax.</li>
+    <li><strong>Enclosure.</strong> Weatherproof, shaded and ventilated so the computer stays within its temperature limits.</li>
+    <li><strong>Cable glands.</strong> Sealed entries, facing down, for power, Ethernet and the antenna cable, with drip loops outside.</li>
+    <li><strong>Breather vent.</strong> Lets air pressure and moisture equalise without letting water in.</li>
+    <li><strong>Rigid mount.</strong> A stiff pole or bracket: pointing must not change once the node has calibrated itself.</li>
+  </ol>
+  </div>
+  <figcaption>Schematic, not to scale. Parts and layout vary between builds.</figcaption>
+</figure>
+
+<style>
+  .anatomy svg {
+    background:
+      radial-gradient(90% 60% at 50% 0%, rgb(92 184 255 / 0.08), transparent 70%),
+      var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .a-note,
+  .a-cable-labels text {
+    fill: var(--text-2);
+    font-family: var(--font-sans);
+    font-size: 20px;
+  }
+
+  .a-marker circle {
+    fill: var(--bg);
+    stroke: var(--star);
+    stroke-width: 1.5;
+  }
+
+  .a-marker text {
+    fill: var(--star);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .a-legend {
+    margin: 16px 0 0;
+    padding-left: 1.9em;
+    color: var(--text-2);
+    font-size: 0.95rem;
+    display: grid;
+    gap: 6px;
+  }
+
+  @media (min-width: 960px) {
+    .anatomy-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      gap: 36px;
+      align-items: start;
+    }
+
+    .a-legend {
+      margin-top: 0;
+    }
+  }
+
+  .a-legend li {
+    margin: 0;
+    padding-left: 4px;
+  }
+
+  .a-legend li::marker {
+    color: var(--star);
+    font-family: var(--font-mono);
+    font-weight: 700;
+  }
+
+  .a-legend strong {
+    color: var(--text);
+  }
+
+  .a-legend .badge {
+    font-size: 0.66rem;
+    margin-right: 2px;
+  }
+</style>

@@ -1,0 +1,511 @@
+---
+import Base from "../layouts/Base.astro";
+import NodeAnatomy from "../components/NodeAnatomy.astro";
+import NodeInside from "../components/NodeInside.astro";
+import StereoPair from "../components/StereoPair.astro";
+import TimingDiagram from "../components/TimingDiagram.astro";
+import TrackDiagram from "../components/TrackDiagram.astro";
+import StarCalDiagram from "../components/StarCalDiagram.astro";
+import SetupPhoneMock from "../components/SetupPhoneMock.astro";
+import { links, sitePath } from "../config";
+
+const description =
+  "Inside a UAP Finder node: the parts, what the software does with every frame, how two nodes miles apart triangulate an object, GPS timing, self-calibration from the stars, the setup page, and the specifications and limits.";
+
+const toc: [string, string][] = [
+  ["anatomy", "Anatomy"],
+  ["inside", "What happens inside"],
+  ["pair", "Two nodes as a pair"],
+  ["timing", "Timing"],
+  ["track", "From fixes to a track"],
+  ["calibration", "Self-calibration"],
+  ["setup-page", "The setup page"],
+  ["specs", "Specs and limits"],
+];
+---
+<Base title="The node" description={description}>
+  <header class="page-hero">
+    <div class="wrap">
+      <p class="eyebrow">The node</p>
+      <h1>A sky camera that measures directions</h1>
+      <p class="lead">
+        A UAP Finder node is a small computer and a wide-angle camera under a clear dome. It watches the sky all day
+        and night, explains away what it can, and reports the exact direction and time of everything else. Two nodes
+        miles apart turn those directions into a position.
+      </p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href={sitePath("/build/")}>Build a node</a>
+        <a class="btn btn-secondary" href={sitePath("/host/#cost")}>Parts and cost</a>
+      </div>
+      <nav aria-label="On this page">
+        <ul class="toc">
+          {toc.map(([id, label]) => <li><a href={`#${id}`}>{label}</a></li>)}
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <section class="section section--tight" aria-label="Status">
+    <div class="wrap">
+      <div class="callout callout--warn">
+        <p>
+          <strong>New and not yet hardware-tested.</strong> The ready-to-flash system image, the setup page and the
+          automatic star calibration described here are new. They are tested in simulation and in containers, but
+          have not yet run on a real Jetson with a real camera and GPS. Figures marked as estimates have not been
+          measured on a complete node.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="anatomy" class="section anchor-section" aria-labelledby="anatomy-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="anatomy-title">Anatomy of a node</h2>
+        <p>
+          Everything sits in one weatherproof box on a rigid mount. The camera looks up through a clear dome; the
+          computer, GPS and optional extras live underneath. Only power and, ideally, an Ethernet cable go in.
+        </p>
+      </div>
+      <NodeAnatomy />
+    </div>
+  </section>
+
+  <section id="inside" class="section anchor-section" aria-labelledby="inside-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="inside-title">What happens inside, frame by frame</h2>
+        <p>
+          The node does the heavy work itself. Sixty times a second it compares the new frame with what the sky
+          normally looks like, follows anything that moves, and drops what it can explain. Only a few hundred bytes
+          per sighting leave your house.
+        </p>
+      </div>
+      <NodeInside />
+      <p class="small muted">
+        More detail, including each filter's rules, in <a href={sitePath("/how-it-works/#on-device")}>How it works</a>.
+      </p>
+    </div>
+  </section>
+
+  <section id="pair" class="section anchor-section" aria-labelledby="pair-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="pair-title">Two nodes working as a pair</h2>
+        <p>
+          One camera knows only the direction to an object, not how far away it is: a small bird near the lens and an
+          aircraft 10 km up can look the same. A second node miles away sees the same object along a different line.
+          Where the two lines cross is the object's position, and how well they cross tells us how certain it is.
+        </p>
+      </div>
+      <StereoPair />
+      <div class="grid grid-3 pair-notes">
+        <article class="card">
+          <h3>Overlap is the point</h3>
+          <p>
+            Two nodes only triangulate in the patch of sky both can see. In the drawing, 12 km apart and both pointing
+            straight up, it starts 6 km up and widens with altitude; aiming cameras towards a shared area lowers it.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Parallax gives distance</h3>
+          <p>
+            Against the background stars the object sits in a different place in each camera's frame. The larger
+            that angle, the better the range is pinned down, which is why nodes need to be miles apart.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Every fix has an error</h3>
+          <p>
+            The overlap of the two uncertainty wedges becomes the published <code>sigma_m</code>. With a 16 km
+            baseline and a target at 10 km it is about 18 m at 0.05° pointing precision (computed, not measured).
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="timing" class="section anchor-section" aria-labelledby="timing-h">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="timing-h">Timing: one clock for every node</h2>
+        <p>
+          Triangulation only works if both sight lines describe the same instant. A Mach 6 object moves about 100 m
+          in 50 ms, so every node needs to know, very precisely, when each frame was taken.
+        </p>
+      </div>
+      <div class="split split--wide-left split--top">
+        <TimingDiagram />
+        <div class="prose">
+          <ol class="steps">
+            <li>
+              <h3>GPS gives the second</h3>
+              <p>
+                The GPS module sends the time as text, and a separate pulse-per-second (PPS) wire that rises exactly
+                at the start of each second. That pulse is far more precise than the text.
+              </p>
+            </li>
+            <li>
+              <h3>chrony locks the clock</h3>
+              <p>
+                The node's clock software (chrony) locks the system clock to that pulse, to around a microsecond.
+                Without a PPS wire, internet time is only good to a few milliseconds.
+              </p>
+            </li>
+            <li>
+              <h3>Frames are stamped on arrival</h3>
+              <p>
+                Each frame gets its capture time from that clock, minus the camera's own delay. Both nodes therefore
+                stamp their frames on the same timescale, even though their frames are not taken at the same moments.
+              </p>
+            </li>
+            <li>
+              <h3>The server lines them up</h3>
+              <p>
+                For each packet it takes the other node's sight line at exactly that time, interpolated between its
+                samples, or the nearest one within 50 ms. The setup page warns if the clock's estimated error
+                exceeds 2 ms.
+              </p>
+            </li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="track" class="section anchor-section" aria-labelledby="track-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="track-title">From fixes to a track</h2>
+        <p>
+          Ten fixes a second become a 3D track. Individual fixes are noisy, so speed and acceleration are never taken
+          from one fix to the next: they come from curves fitted to many fixes, each with its own error bar. Flags such
+          as <code>high_g</code> use the 2σ lower bound, so noise alone cannot set them off.
+        </p>
+      </div>
+      <TrackDiagram />
+    </div>
+  </section>
+
+  <section id="calibration" class="section anchor-section" aria-labelledby="cal-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="cal-title">Self-calibration from the stars</h2>
+        <p>
+          Knowing exactly where the camera points matters more than anything else in the error budget. Nobody can
+          aim a camera to a hundredth of a degree by hand, so the node measures its own pointing from the stars on
+          the first clear night.
+        </p>
+      </div>
+      <StarCalDiagram />
+      <div class="cal-text">
+        <div class="prose">
+          <h3>How it works</h3>
+          <ol>
+            <li>
+              Every 30 minutes the node checks whether it is properly dark (the Sun more than 12° below the horizon),
+              whether it has a GPS fix, and whether it still needs a calibration (none yet, or the last one is more
+              than 7 days old).
+            </li>
+            <li>
+              If so, it stacks several night frames, finds the stars and matches them to a bundled catalogue of bright
+              stars, starting from a rough guess: the orientation sensor's reading if fitted, otherwise "pointing up,
+              heading unknown".
+            </li>
+            <li>
+              It solves the camera's heading, tilt and roll, its focal length and the lens's distortion together, and
+              saves the result. Clouds or a failed solve just mean it tries again later.
+            </li>
+          </ol>
+        </div>
+        <div class="prose">
+          <h3>Until the first clear night</h3>
+          <p>
+            The node reports with a large angular uncertainty and the status page says
+            <em>"Pointing: waiting for a clear night"</em>. Because the server accepts only geometrically consistent
+            matches, an uncalibrated node rarely produces false fixes.
+          </p>
+          <p>
+            The same solve also measures the lens: its exact focal length and how it bends straight lines near the
+            edges, so a direction is right across the whole frame, not just in the middle.
+          </p>
+        </div>
+      </div>
+      <h3 class="why-title">Why it matters</h3>
+      <dl class="figures-row">
+        <div><dt>One pixel, 1080p behind a 90° lens</dt><dd>≈ 0.047°</dd></div>
+        <div><dt>Pointing from the stars (centroiding)</dt><dd>0.01–0.05°</dd></div>
+        <div><dt>Orientation sensor alone</dt><dd>≈ 1°</dd></div>
+        <div><dt>Error at 16 km baseline, 10 km up: 0.05° vs 1°</dt><dd>18 m vs 351 m</dd></div>
+      </dl>
+      <p class="small muted">
+        A 1° heading error alone puts a fix about 870 m sideways at 50 km range. Figures from the error model in
+        <a href={links.mathDoc}>docs/MATH.md</a>; the automatic calibration is new and not yet tested on a real
+        night sky with node hardware.
+      </p>
+    </div>
+  </section>
+
+  <section id="setup-page" class="section anchor-section" aria-labelledby="setup-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="setup-title">The setup page</h2>
+        <p>
+          A node has no screen. It serves its own small web page on your network, at
+          <a href="http://uapfinder.local"><code>http://uapfinder.local</code></a>. If it has no network, it opens a
+          Wi-Fi hotspot called <code>UAPFinder-XXXX</code> (password <code>uapfinder</code>) with the page at
+          <code>http://10.42.0.1</code>.
+        </p>
+      </div>
+      <div class="phones">
+        <SetupPhoneMock screen="claim" />
+        <SetupPhoneMock screen="status" />
+        <div class="prose phones-text">
+          <h3>Before it is claimed</h3>
+          <p>
+            Choose a network, enter the <strong>claim code</strong> your network coordinator sent you (eight
+            characters, like <code>7KQ2-M9XD</code>; upper or lower case, dash optional, single use), and set a
+            device password. The node exchanges the code for its own identity and key; there is nothing to copy by
+            hand.
+          </p>
+          <h3>Afterwards</h3>
+          <p>
+            The page shows what hardware it found and how it is doing: camera, GPS fix and satellites, PPS lock, the
+            clock's estimated error, orientation sensor, ADS-B source, storage, server connection, pointing
+            calibration and software version. A live preview with a horizon and elevation overlay helps with aiming.
+            Restart, shut down and a diagnostics download are there too.
+          </p>
+          <p>
+            Once the device password is set, anything that changes the node needs it; the status view stays readable
+            on your local network.
+          </p>
+          <p><a class="arrow-link" href={sitePath("/build/#setup")}>Setting it up, step by step</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="specs" class="section anchor-section" aria-labelledby="specs-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="specs-title">Specifications and limits</h2>
+        <p>
+          Defaults of the software with the recommended parts. Values marked <em>estimate</em> are calculated, not yet
+          measured on a complete node.
+        </p>
+      </div>
+      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="specs-caption">
+        <table class="table-stack specs">
+          <caption id="specs-caption">Node specifications with the recommended parts</caption>
+          <thead>
+            <tr>
+              <th scope="col">Item</th>
+              <th scope="col">Value</th>
+              <th scope="col">Basis</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Computer</th>
+              <td data-label="Value">NVIDIA Jetson Orin Nano 8 GB developer kit</td>
+              <td data-label="Basis">The image is built on Jetson Linux R36.5.2 (JetPack 6.2.3, Ubuntu 22.04).</td>
+            </tr>
+            <tr>
+              <th scope="row">Video</th>
+              <td data-label="Value">1920 × 1080 at 60 frames per second</td>
+              <td data-label="Basis">Software default; the IMX477 camera has this mode on Jetson.</td>
+            </tr>
+            <tr>
+              <th scope="row">Field of view</th>
+              <td data-label="Value">≈ 90° × 59°</td>
+              <td data-label="Basis">With the recommended ≈ 90° lens; the exact value comes from calibration.</td>
+            </tr>
+            <tr>
+              <th scope="row">Pixel scale</th>
+              <td data-label="Value">≈ 0.047° per pixel</td>
+              <td data-label="Basis">90° over 1920 pixels.</td>
+            </tr>
+            <tr>
+              <th scope="row">Angular precision</th>
+              <td data-label="Value">0.01–0.05° (estimate)</td>
+              <td data-label="Basis">Sub-pixel centroids with star-calibrated pointing; about 1° from an orientation sensor alone.</td>
+            </tr>
+            <tr>
+              <th scope="row">Position error of a pair</th>
+              <td data-label="Value">≈ 4–30 m at 5–20 miles apart (estimate)</td>
+              <td data-label="Basis">Error model, target 10 km up, 0.01–0.05° precision; about 50–270 m at 80 miles.</td>
+            </tr>
+            <tr>
+              <th scope="row">Timing</th>
+              <td data-label="Value">GPS PPS-disciplined clock</td>
+              <td data-label="Basis">The setup page warns above 2 ms estimated error; without PPS, network time (a few ms).</td>
+            </tr>
+            <tr>
+              <th scope="row">Reports</th>
+              <td data-label="Value">10 per second per tracked object, ≈ 520 bytes each</td>
+              <td data-label="Basis">Plus a heartbeat every 10 seconds; signed with the node's key.</td>
+            </tr>
+            <tr>
+              <th scope="row">Video memory</th>
+              <td data-label="Value">Last 10 seconds in RAM</td>
+              <td data-label="Basis">A 10-second clip around a confirmed event is uploaded only on request.</td>
+            </tr>
+            <tr>
+              <th scope="row">Storage</th>
+              <td data-label="Value">microSD 64 GB+ (system), NVMe SSD (clips)</td>
+              <td data-label="Basis">A blank NVMe drive is formatted on first boot.</td>
+            </tr>
+            <tr>
+              <th scope="row">Power</th>
+              <td data-label="Value">15–30 W average (estimate)</td>
+              <td data-label="Basis">NVIDIA's power modes plus peripherals. <a href={sitePath("/host/#power")}>Details</a>.</td>
+            </tr>
+            <tr>
+              <th scope="row">Upload</th>
+              <td data-label="Value">≈ 5 MB a day idle (UDP); ≈ 5 KB/s while tracking (estimate)</td>
+              <td data-label="Basis">From the wire protocol's message sizes. <a href={sitePath("/host/#bandwidth")}>Details</a>.</td>
+            </tr>
+            <tr>
+              <th scope="row">Spacing</th>
+              <td data-label="Value">5–40 miles from another node</td>
+              <td data-label="Basis">The server pairs nodes up to 80 miles apart; beyond about 40 miles objects sit low on both horizons.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="grid grid-2 limits">
+        <div class="card">
+          <h3>What a node cannot do</h3>
+          <ul>
+            <li>Measure distance on its own: one camera gives only a direction.</li>
+            <li>See through cloud, or detect faint objects against a bright daytime sky as well as at night.</li>
+            <li>Identify what an object is. It measures position and motion; flags describe motion only.</li>
+            <li>Measure accurately near the horizon, where refraction (about 0.5°) and haze dominate.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Not yet known</h3>
+          <ul>
+            <li>Real power draw and temperatures in a sealed box in summer.</li>
+            <li>Whether the Orin Nano sustains 60 fps on the CPU path; the benchmark exists, a Jetson result does not yet.</li>
+            <li>How quickly the star calibration succeeds under real skies and light pollution.</li>
+            <li>Detection limits for small, faint or very fast objects.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="next-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="next-title">Build one</h2>
+        <p>
+          The complete guide covers the parts, a one-time firmware check, flashing the card, wiring, the enclosure,
+          placement and setup, in the order you do them.
+        </p>
+      </div>
+      <div class="btn-row">
+        <a class="btn btn-primary" href={sitePath("/build/")}>Build a node, step by step</a>
+        <a class="btn btn-secondary" href={sitePath("/get-involved/#signup")}>Register your interest first</a>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .pair-notes {
+    margin-top: 28px;
+  }
+
+  .cal-text {
+    display: grid;
+    gap: 8px 48px;
+    margin-top: 28px;
+  }
+
+  @media (min-width: 900px) {
+    .cal-text {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  .why-title {
+    margin-top: 36px;
+  }
+
+  .figures-row {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    margin: 0 0 14px;
+  }
+
+  .figures-row div {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 14px 18px;
+  }
+
+  .figures-row dt {
+    color: var(--muted);
+    font-size: 0.86rem;
+  }
+
+  .figures-row dd {
+    margin: 0;
+    font-size: clamp(1.3rem, 1.1rem + 0.8vw, 1.7rem);
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .phones {
+    display: grid;
+    gap: 28px;
+    align-items: start;
+  }
+
+  @media (min-width: 700px) {
+    .phones {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .phones-text {
+      grid-column: 1 / -1;
+    }
+  }
+
+  @media (min-width: 1100px) {
+    .phones {
+      grid-template-columns: 300px 300px minmax(0, 1fr);
+    }
+
+    .phones-text {
+      grid-column: auto;
+    }
+  }
+
+  .specs {
+    min-width: 760px;
+  }
+
+  .specs tbody th {
+    white-space: nowrap;
+  }
+
+  .specs td:last-child {
+    color: var(--text-2);
+    font-size: 0.92rem;
+  }
+
+  .limits {
+    margin-top: 24px;
+  }
+
+  .limits ul {
+    color: var(--text-2);
+    margin: 0;
+  }
+</style>

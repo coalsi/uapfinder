@@ -1,0 +1,218 @@
+---
+/**
+ * One step of the build guide: what you need, numbered actions (default
+ * slot), an optional illustration, how to check it worked, and common
+ * mistakes. Named slots: "figure", "check", "mistakes", "after".
+ */
+interface Props {
+  n: number;
+  id: string;
+  title: string;
+  /** "Optional" or "Recommended", shown as a badge. */
+  badge?: string;
+  need?: string[];
+}
+const { n, id, title, badge, need = [] } = Astro.props;
+const hasFigure = Astro.slots.has("figure");
+---
+<section id={id} class="bstep anchor-section" aria-labelledby={`${id}-title`}>
+  <header class="bstep-head">
+    <span class="bstep-n" aria-hidden="true">{n}</span>
+    <h2 id={`${id}-title`}>
+      <span class="visually-hidden">Step {n}: </span>{title}
+      {badge && <span class="badge">{badge}</span>}
+    </h2>
+  </header>
+  <div class={hasFigure ? "bstep-body bstep-body--fig" : "bstep-body"}>
+    <div class="bstep-main">
+      {
+        need.length > 0 && (
+          <div class="bstep-need">
+            <h3>You need</h3>
+            <ul>
+              {need.map((item) => (
+                <li set:html={item} />
+              ))}
+            </ul>
+          </div>
+        )
+      }
+      <div class="bstep-actions">
+        <slot />
+      </div>
+      {
+        Astro.slots.has("check") && (
+          <div class="bstep-check">
+            <h3>
+              <span aria-hidden="true">✓</span> Check
+            </h3>
+            <slot name="check" />
+          </div>
+        )
+      }
+      {
+        Astro.slots.has("mistakes") && (
+          <div class="bstep-mistakes">
+            <h3>Common mistakes</h3>
+            <slot name="mistakes" />
+          </div>
+        )
+      }
+    </div>
+    {
+      hasFigure && (
+        <div class="bstep-fig">
+          <slot name="figure" />
+        </div>
+      )
+    }
+  </div>
+  <slot name="after" />
+</section>
+
+<style>
+  .bstep {
+    padding-block: clamp(36px, 5vw, 56px);
+    border-top: 1px solid var(--line);
+  }
+
+  .bstep-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+
+  .bstep-n {
+    flex: none;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    border: 1.5px solid var(--star);
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--star);
+    background: var(--surface);
+  }
+
+  .bstep-head h2 {
+    margin: 0;
+    font-size: clamp(1.35rem, 1.1rem + 1vw, 1.8rem);
+  }
+
+  .bstep-head .badge {
+    margin-left: 8px;
+    position: relative;
+    top: -3px;
+  }
+
+  .bstep-body {
+    display: grid;
+    gap: clamp(20px, 4vw, 44px);
+  }
+
+  .bstep-body > * {
+    min-width: 0;
+  }
+
+  @media (max-width: 959px) {
+    .bstep-fig {
+      order: -1;
+    }
+  }
+
+  @media (min-width: 960px) {
+    .bstep-body--fig {
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+      align-items: start;
+    }
+
+  }
+
+  .bstep-main {
+    max-width: var(--prose);
+  }
+
+  .bstep-need {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 12px 16px;
+    margin-bottom: 18px;
+  }
+
+  .bstep-need h3,
+  .bstep-check h3,
+  .bstep-mistakes h3 {
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 6px;
+    font-weight: 600;
+  }
+
+  .bstep-need ul {
+    margin: 0;
+    padding-left: 1.2em;
+    color: var(--text-2);
+    font-size: 0.95rem;
+  }
+
+  .bstep-actions :global(ol) {
+    padding-left: 1.4em;
+  }
+
+  .bstep-actions :global(ol > li::marker) {
+    color: var(--star);
+    font-family: var(--font-mono);
+    font-weight: 700;
+  }
+
+  .bstep-actions :global(li) {
+    color: var(--text-2);
+  }
+
+  .bstep-actions :global(li strong) {
+    color: var(--text);
+  }
+
+  .bstep-check {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--ok);
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+    padding: 12px 16px;
+    margin: 18px 0;
+    color: var(--text-2);
+  }
+
+  .bstep-check h3 {
+    color: var(--ok);
+  }
+
+  .bstep-check :global(> :last-child) {
+    margin-bottom: 0;
+  }
+
+  .bstep-mistakes {
+    color: var(--text-2);
+    font-size: 0.95rem;
+  }
+
+  .bstep-mistakes :global(ul) {
+    margin: 0;
+    padding-left: 1.2em;
+  }
+
+  @media print {
+    .bstep {
+      break-inside: avoid-page;
+    }
+
+  }
+</style>

@@ -1,0 +1,258 @@
+---
+/**
+ * GPS timing: the pulse-per-second sets both nodes' clocks; each frame is
+ * time-stamped on that shared clock; the server pairs a packet with the other
+ * node's line of sight at the same instant (interpolated between its samples,
+ * or the nearest sample within 50 ms). Times are illustrative but the frame
+ * period (60 fps), report rate (10 Hz) and 50 ms window are the defaults.
+ */
+const W = 560;
+const X0 = 108;
+const X1 = 544;
+const T_MAX = 200; // ms
+const x = (t: number) => X0 + ((X1 - X0) * t) / T_MAX;
+const f = (n: number) => n.toFixed(1);
+const FRAME = 1000 / 60;
+const rows = { pps: 112, a: 186, b: 256, srv: 330 };
+const frames = (offset: number) => Array.from({ length: 13 }, (_, k) => offset + k * FRAME).filter((t) => t <= T_MAX);
+const aFrames = frames(2);
+const bFrames = frames(11);
+const aReports = [aFrames[2]!, aFrames[8]!];
+const bReports = [bFrames[4]!, bFrames[10]!];
+const tA = aReports[1]!; // the packet being matched
+const win = 50;
+const sats: [number, number][] = [
+  [150, 34],
+  [326, 22],
+  [492, 36],
+];
+---
+<figure class="diagram timing">
+  <p class="wide-hint" aria-hidden="true">Scroll sideways to see the whole timeline.</p>
+  <div class="timing-scroll" tabindex="0" role="region" aria-label="Timing diagram">
+  <svg viewBox={`0 0 ${W} 400`} role="img" aria-labelledby="timing-title timing-desc">
+    <title id="timing-title">How GPS time lets two nodes' frames be compared</title>
+    <desc id="timing-desc">
+      A timeline from 0 to 200 milliseconds. GPS satellites drive a pulse-per-second signal at the start of each
+      second, which disciplines both nodes' clocks to the same time. Node A and node B each capture a frame every
+      16.7 milliseconds, at different moments, and every frame is stamped with that shared clock. While tracking, each
+      node reports a sight line ten times a second. For node A's report at about 135 milliseconds, the server takes
+      node B's sight line at exactly the same instant, interpolated between B's reports before and after it; if B
+      has no reports on both sides it uses B's nearest report within 50 milliseconds.
+    </desc>
+
+    {
+      sats.map(([sx, sy]) => (
+        <g class="t-sat">
+          <rect x={sx - 7} y={sy - 7} width="14" height="14" rx="2" />
+          <rect x={sx - 27} y={sy - 4} width="16" height="8" rx="1" class="t-panel" />
+          <rect x={sx + 11} y={sy - 4} width="16" height="8" rx="1" class="t-panel" />
+          <path d={`M${sx} ${sy + 10} L${x(0)} ${rows.pps - 30}`} class="t-signal" />
+        </g>
+      ))
+    }
+    <text class="t-note" x={W - 12} y="72" text-anchor="end">GPS satellites</text>
+
+    <!-- row labels -->
+    <g class="t-row">
+      <text x="10" y={rows.pps + 6}>PPS</text>
+      <text x="10" y={rows.a + 6}>Node A</text>
+      <text x="10" y={rows.b + 6}>Node B</text>
+      <text x="10" y={rows.srv + 6}>Server</text>
+    </g>
+
+    <!-- PPS: one pulse at the start of the second -->
+    <path d={`M${X0} ${rows.pps + 10} H${f(x(0) + 0.5)} V${rows.pps - 22} H${f(x(0) + 9)} V${rows.pps + 10} H${X1}`} class="t-pps" />
+    <text class="t-note" x={f(x(0) + 18)} y={rows.pps - 6}>start of the second: both clocks locked to it</text>
+
+    <!-- frame ticks -->
+    {[...aFrames.map((t) => [t, rows.a] as const), ...bFrames.map((t) => [t, rows.b] as const)].map(([t, y]) => (
+      <line x1={f(x(t))} y1={y - 12} x2={f(x(t))} y2={y + 12} class="t-frame" />
+    ))}
+    <line x1={X0} y1={rows.a} x2={X1} y2={rows.a} class="t-base" />
+    <line x1={X0} y1={rows.b} x2={X1} y2={rows.b} class="t-base" />
+    <line x1={X0} y1={rows.srv} x2={X1} y2={rows.srv} class="t-base" />
+
+    <!-- reported frames -->
+    {aReports.map((t) => <circle cx={f(x(t))} cy={rows.a} r="7" class="t-report" />)}
+    {bReports.map((t) => <circle cx={f(x(t))} cy={rows.b} r="7" class="t-report" />)}
+
+    <!-- match: A's packet time carried down -->
+    <line x1={f(x(tA))} y1={rows.a + 10} x2={f(x(tA))} y2={rows.srv + 12} class="t-match" />
+    <path d={`M${f(x(bReports[0]!))} ${rows.b - 20} Q ${f(x(tA))} ${rows.b - 40} ${f(x(bReports[1]!))} ${rows.b - 20}`} class="t-interp" />
+    <rect x={f(x(tA) - 7)} y={rows.b - 7} width="14" height="14" transform={`rotate(45 ${f(x(tA))} ${rows.b})`} class="t-interp-pt" />
+    <text class="t-note t-note--star" x={f(x(tA) - 14)} y={rows.b + 32} text-anchor="end">B interpolated to A's instant</text>
+
+    <!-- 50 ms window -->
+    <rect x={f(x(tA - win))} y={rows.srv - 14} width={f(x(tA + win) - x(tA - win))} height="28" rx="4" class="t-window" />
+    <text class="t-note" x={f(x(tA))} y={rows.srv + 38} text-anchor="middle">fallback: nearest sample within ±50 ms</text>
+
+    <!-- axis -->
+    <g class="t-axis">
+      {[0, 50, 100, 150, 200].map((t) => (
+        <g>
+          <line x1={f(x(t))} y1="374" x2={f(x(t))} y2="380" />
+          <text x={f(x(t))} y="396" text-anchor={t === 200 ? "end" : "middle"} dx={t === 200 ? 8 : 0}>{t === 200 ? "200 ms" : t}</text>
+        </g>
+      ))}
+      <line x1={X0} y1="374" x2={X1} y2="374" />
+    </g>
+  </svg>
+  </div>
+  <ul class="timing-key">
+    <li><span class="k k-frame" aria-hidden="true"></span> a frame, every 16.7 ms (60 fps), stamped with its capture time</li>
+    <li><span class="k k-report" aria-hidden="true"></span> a reported sight line, 10 a second while tracking</li>
+    <li><span class="k k-interp" aria-hidden="true"></span> B's sight line at A's exact time</li>
+  </ul>
+  <figcaption>Frame times are illustrative; the frame rate, report rate and 50 ms window are the defaults.</figcaption>
+</figure>
+
+<style>
+  .timing-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg-elev);
+  }
+
+  .timing-scroll svg {
+    display: block;
+    width: 100%;
+    min-width: 520px;
+    height: auto;
+  }
+
+  .t-sat rect {
+    fill: #22304d;
+    stroke: #b6c2d6;
+    stroke-width: 1.2;
+  }
+
+  .t-sat .t-panel {
+    fill: #2f5f8f;
+    stroke: #8fd0ff;
+  }
+
+  .t-signal {
+    stroke: #7fe3ae;
+    stroke-width: 1.2;
+    stroke-dasharray: 3 5;
+    fill: none;
+  }
+
+  .t-row text {
+    fill: var(--text);
+    font-family: var(--font-sans);
+    font-size: 19px;
+    font-weight: 600;
+  }
+
+  .t-note {
+    fill: var(--text-2);
+    font-family: var(--font-sans);
+    font-size: 16px;
+  }
+
+  .t-note--star {
+    fill: var(--star);
+  }
+
+  .t-pps {
+    stroke: #7fe3ae;
+    stroke-width: 2.4;
+    fill: none;
+  }
+
+  .t-base {
+    stroke: #2a3958;
+    stroke-width: 1.2;
+  }
+
+  .t-frame {
+    stroke: #8fd0ff;
+    stroke-width: 1.6;
+  }
+
+  .t-report {
+    fill: #8fd0ff;
+    stroke: var(--bg);
+    stroke-width: 2;
+  }
+
+  .t-match {
+    stroke: #ffd27a;
+    stroke-width: 1.4;
+    stroke-dasharray: 4 4;
+  }
+
+  .t-interp {
+    stroke: #ffd27a;
+    stroke-width: 1.4;
+    fill: none;
+  }
+
+  .t-interp-pt {
+    fill: var(--bg);
+    stroke: #ffd27a;
+    stroke-width: 2;
+  }
+
+  .t-window {
+    fill: rgb(255 210 122 / 0.14);
+    stroke: #ffd27a;
+    stroke-width: 1.2;
+  }
+
+  .t-axis line {
+    stroke: #6f7f9e;
+  }
+
+  .t-axis text {
+    fill: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 14px;
+  }
+
+  .timing-key {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 22px;
+    color: var(--text-2);
+    font-size: 0.9rem;
+  }
+
+  .timing-key li {
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .k {
+    display: inline-block;
+    flex: none;
+  }
+
+  .k-frame {
+    width: 2px;
+    height: 16px;
+    background: #8fd0ff;
+  }
+
+  .k-report {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #8fd0ff;
+  }
+
+  .k-interp {
+    width: 10px;
+    height: 10px;
+    border: 2px solid #ffd27a;
+    transform: rotate(45deg);
+  }
+</style>

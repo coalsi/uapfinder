@@ -24,13 +24,13 @@ const parts: Part[] = [
     part: "Camera",
     example: "Arducam 12.3 MP IMX477 HQ camera for Jetson (B0249), CS mount",
     price: "≈ $60–76",
-    note: "Supports 1920 × 1080 at 60 fps. The developer kit uses 22-pin, 0.5 mm camera cables; this kit includes one. Enable the camera with NVIDIA's jetson-io tool.",
+    note: "Supports 1920 × 1080 at 60 fps. The developer kit uses 22-pin, 0.5 mm camera cables; this kit includes one. The UAP Finder image sets it up on the CAM0 connector.",
   },
   {
     part: "Lens",
     example: "≈ 90° wide-angle M12 lens with CS adapter (e.g. Arducam M23356H09, 3.56 mm)",
     price: "≈ $19–25",
-    note: "Matches the software's default 90° field of view. Its distortion is calibrated once during setup.",
+    note: "Matches the software's default 90° field of view. The node measures its exact focal length and distortion from the stars.",
   },
   {
     part: "GPS with PPS",
@@ -46,6 +46,7 @@ const parts: Part[] = [
   },
   {
     part: "Storage",
+    optional: "Recommended",
     example: "NVMe M.2 SSD, 256–512 GB",
     price: "≈ $60–150",
     note: "Clips are written at about 187 MB/s, so NVMe is required; microSD is too slow. SSD prices rose sharply during 2026.",
@@ -143,8 +144,9 @@ const parts: Part[] = [
         <article class="card">
           <h3>Some technical comfort</h3>
           <p>
-            Setup involves flashing an operating system, connecting a camera and GPS module, and editing a
-            configuration file, or a friend who enjoys that sort of thing.
+            Setup means flashing a microSD card, plugging in a camera ribbon and five GPS wires, and mounting a box
+            outdoors. A phone does the rest; no terminal is needed. The <a href={sitePath("/build/")}>build guide</a>
+            walks through it.
           </p>
         </article>
         <article class="card">
@@ -306,8 +308,9 @@ const parts: Part[] = [
       <div>
         <h2 id="setup-title">Setup overview</h2>
         <p>
-          The step-by-step guide, configuration reference and troubleshooting live with the software in the
-          <a href={links.edgeReadme}>edge README</a>. In outline:
+          The node is built to be flashed and plugged in. The <a href={sitePath("/build/")}>step-by-step build guide</a>
+          covers every step with pictures and checks, and <a href={sitePath("/device/")}>The node</a> explains how it
+          works. In outline:
         </p>
         <ol class="steps">
           <li>
@@ -315,39 +318,41 @@ const parts: Part[] = [
             <p>Use the interest form and the coverage map so your node has a partner 5–40 miles away.</p>
           </li>
           <li>
-            <h3>Install the operating system</h3>
-            <p>Flash NVIDIA JetPack 6.2 or later to the NVMe SSD, which also enables the Super power modes.</p>
-          </li>
-          <li>
-            <h3>Connect the camera</h3>
-            <p>Use a 22-pin cable and enable the camera connector with NVIDIA's <code>jetson-io</code> tool.</p>
-          </li>
-          <li>
-            <h3>Wire the GPS for time</h3>
+            <h3>Flash the system image</h3>
             <p>
-              Connect its serial output and PPS pin to the 40-pin header, then let gpsd and chrony keep the system clock
-              on GPS time.
+              Write the UAP Finder image to a microSD card with balenaEtcher. A brand-new developer kit may first need a
+              one-time firmware update from NVIDIA.
             </p>
           </li>
           <li>
-            <h3>Install the edge software</h3>
-            <p>Add an ADS-B source (a local receiver or an online feed) and the node ID and key the project issues.</p>
+            <h3>Plug the parts together</h3>
+            <p>The camera ribbon into CAM0, the GPS module onto five header pins, and the optional SSD, ADS-B receiver and orientation sensor.</p>
           </li>
           <li>
-            <h3>Calibrate</h3>
+            <h3>Mount it outdoors and power on</h3>
+            <p>Point the camera anywhere from 45° up to straight up, connect Ethernet (or use its Wi-Fi hotspot) and power.</p>
+          </li>
+          <li>
+            <h3>Claim it from your phone</h3>
             <p>
-              Calibrate the lens, solve the camera's pointing from the stars on a clear night, measure the capture delay
-              and draw the sky mask.
+              Open <code>http://uapfinder.local</code>, enter the claim code from the network coordinator and set a
+              device password. The page shows the camera view, GPS fix and time.
             </p>
           </li>
           <li>
-            <h3>Mount and verify</h3>
-            <p>Mount the node outdoors and confirm it appears, online, on the live map.</p>
+            <h3>Let it calibrate itself</h3>
+            <p>
+              On the first clear night the node works out exactly where it points from the stars, then appears on the
+              live map.
+            </p>
           </li>
         </ol>
+        <p class="small muted">
+          The system image, setup page and automatic calibration are new and not yet tested on real hardware.
+        </p>
         <p class="btn-row">
-          <a class="btn btn-primary" href={sitePath("/download/#node")}>Download and set up</a>
-          <a class="btn btn-secondary" href={links.edgeReadme}>Read the edge setup guide</a>
+          <a class="btn btn-primary" href={sitePath("/build/")}>Build a node, step by step</a>
+          <a class="btn btn-secondary" href={sitePath("/device/")}>How the node works</a>
         </p>
       </div>
       <aside class="card" aria-labelledby="dontneed-title">

@@ -1,0 +1,338 @@
+---
+/**
+ * Small schematic illustrations for the build guide. Each is one accessible
+ * SVG with a title and description; all are schematic, not to scale.
+ */
+interface Props {
+  kind: "etcher" | "uefi" | "ssd" | "csi" | "focus" | "microsd" | "mount" | "aim";
+}
+const { kind } = Astro.props;
+const id = `bf-${kind}`;
+
+const text: Record<Props["kind"], { title: string; desc: string; caption: string }> = {
+  etcher: {
+    title: "Writing the image with balenaEtcher",
+    desc: "Three steps left to right: Flash from file, choosing the downloaded .img.xz image; Select target, choosing the microSD card of 64 GB or more; Flash, which writes and then verifies the card.",
+    caption: "Etcher reads the compressed .img.xz directly; there is no need to unpack it.",
+  },
+  uefi: {
+    title: "Reading the firmware version on the UEFI screen",
+    desc: "A monitor showing the developer kit's UEFI setup screen, reached by pressing Esc during start-up. Near the top, under the board name, a version number such as 36.4.3 is highlighted. Version 36 or higher means the firmware step can be skipped; anything lower needs the update.",
+    caption: "Illustration: the exact layout differs between firmware versions. Look for the version number near the top.",
+  },
+  ssd: {
+    title: "Fitting the NVMe SSD under the carrier board",
+    desc: "The developer kit turned upside down. The SSD goes into the M.2 Key M slot at an angle of about 30 degrees, is pressed down flat, and is held by a small screw at its far end.",
+    caption: "Schematic. Use the long 2280 slot if your SSD is 80 mm long.",
+  },
+  csi: {
+    title: "Inserting the camera ribbon into CAM0",
+    desc: "Side view of the camera connector on the carrier board. Its latch is lifted, the ribbon slides in flat and fully, with its metal contacts facing down toward the board, and the latch is pressed closed to clamp it.",
+    caption: "Schematic. Lift the latch gently; it hinges, it does not come off.",
+  },
+  focus: {
+    title: "Focusing at infinity",
+    desc: "Two views of a distant point of light. Left, out of focus: a large soft disc. Right, in focus: a small sharp point. Turn the lens until the point is as small and bright as possible.",
+    caption: "Focus on something far away: a distant tree line, a mast, or at night a bright star or planet.",
+  },
+  microsd: {
+    title: "Where the microSD card goes",
+    desc: "Side view of the developer kit: the carrier board at the bottom, the Jetson module above it with its heatsink and fan on top. The microSD slot is on the underside of the module, and the card slides in horizontally from the edge.",
+    caption: "Schematic. The slot is on the module, not on the carrier board.",
+  },
+  mount: {
+    title: "Mounting the node outdoors",
+    desc: "A node on a rigid pole: the enclosure with its clear dome on top, a sun shade over the box that leaves the dome's view open, cable glands facing down with drip loops in the cables, and power from an outdoor outlet with GFCI or RCD protection.",
+    caption: "Schematic. Keep the dome clear of the shade, eaves and trees.",
+  },
+  aim: {
+    title: "How to aim the camera",
+    desc: "A node on the ground with a highlighted band of directions from 45 degrees above the horizon to straight up: aim the camera's centre anywhere in that band. Trees and roofs block the low sky near the horizon.",
+    caption: "Rough aim is enough. The node measures its exact pointing from the stars.",
+  },
+};
+const t = text[kind];
+---
+<figure class="diagram bfig">
+  <svg viewBox={kind === "mount" ? "0 0 400 330" : kind === "focus" ? "0 0 400 190" : kind === "etcher" ? "0 0 400 200" : "0 0 400 250"} role="img" aria-labelledby={`${id}-t ${id}-d`}>
+    <title id={`${id}-t`}>{t.title}</title>
+    <desc id={`${id}-d`}>{t.desc}</desc>
+    <defs>
+      <marker id={`${id}-arrow`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10 Z" fill="#ffd27a"></path>
+      </marker>
+      <radialGradient id={`${id}-blur`}>
+        <stop offset="0" stop-color="#e8edf6" stop-opacity="0.5"></stop>
+        <stop offset="0.7" stop-color="#e8edf6" stop-opacity="0.25"></stop>
+        <stop offset="1" stop-color="#e8edf6" stop-opacity="0"></stop>
+      </radialGradient>
+      <radialGradient id={`${id}-sharp`}>
+        <stop offset="0" stop-color="#ffffff"></stop>
+        <stop offset="0.35" stop-color="#ffffff" stop-opacity="0.8"></stop>
+        <stop offset="1" stop-color="#ffffff" stop-opacity="0"></stop>
+      </radialGradient>
+    </defs>
+
+    {
+      kind === "etcher" && (
+        <g>
+          {[
+            ["Flash from file", ".img.xz", 18],
+            ["Select target", "microSD", 144],
+            ["Flash!", "write + verify", 270],
+          ].map(([label, sub, x]) => (
+            <g>
+              <rect x={x} y="40" width="112" height="112" rx="12" class="bf-box" />
+              <text x={Number(x) + 56} y="134" text-anchor="middle" class="bf-label">{label}</text>
+              <text x={Number(x) + 56} y="176" text-anchor="middle" class="bf-sub">{sub}</text>
+            </g>
+          ))}
+          <path d="M60 64 h22 l10 10 v30 h-32 Z" class="bf-icon" />
+          <path d="M184 66 h24 l8 8 v32 h-32 Z" class="bf-icon" />
+          <path d="M190 66 v8 M196 66 v8 M202 66 v8" stroke="#060a13" stroke-width="2" />
+          <path d="M330 62 l-12 24 h10 l-6 22 l18 -28 h-10 l8 -18 Z" fill="#ffd27a" />
+          <path d="M132 96 h10 M258 96 h10" stroke="#ffd27a" stroke-width="2" marker-end={`url(#${id}-arrow)`} />
+        </g>
+      )
+    }
+
+    {
+      kind === "uefi" && (
+        <g>
+          <rect x="40" y="16" width="320" height="196" rx="10" class="bf-monitor" />
+          <rect x="54" y="30" width="292" height="168" rx="4" fill="#0a1a3a" />
+          <rect x="180" y="212" width="40" height="18" fill="#22304d" />
+          <rect x="140" y="228" width="120" height="8" rx="3" fill="#22304d" />
+          <text x="70" y="58" class="bf-mono">Jetson Orin Nano Developer Kit</text>
+          <text x="70" y="80" class="bf-mono bf-mono--dim">Not Specified</text>
+          <rect x="64" y="88" width="222" height="26" rx="3" fill="rgb(255 210 122 / 0.16)" stroke="#ffd27a" />
+          <text x="70" y="106" class="bf-mono bf-mono--hi">36.4.3-gcid-…</text>
+          <text x="70" y="140" class="bf-mono bf-mono--dim">Device Manager</text>
+          <text x="70" y="160" class="bf-mono bf-mono--dim">Boot Manager</text>
+          <text x="70" y="180" class="bf-mono bf-mono--dim">Boot Maintenance Manager</text>
+          <rect x="296" y="150" width="40" height="30" rx="5" class="bf-key" />
+          <text x="316" y="171" text-anchor="middle" class="bf-keytext">Esc</text>
+        </g>
+      )
+    }
+
+    {
+      kind === "ssd" && (
+        <g>
+          <rect x="20" y="120" width="360" height="22" rx="4" class="bf-board" />
+          <text x="200" y="174" text-anchor="middle" class="bf-sub">carrier board, upside down</text>
+          <rect x="44" y="100" width="34" height="20" rx="2" class="bf-slot" />
+          <text x="61" y="88" text-anchor="middle" class="bf-label">M.2 Key M</text>
+          <rect x="330" y="104" width="14" height="16" fill="#8e9bb2" />
+          <circle cx="337" cy="100" r="7" fill="#b6c2d6" />
+          <path d="M333 100 h8 M337 96 v8" stroke="#060a13" stroke-width="1.6" />
+          <text x="337" y="74" text-anchor="middle" class="bf-label">screw</text>
+          <g transform="rotate(-24 70 108)">
+            <rect x="70" y="98" width="250" height="18" rx="2" fill="#5cb8ff" />
+            <rect x="110" y="101" width="40" height="12" rx="1" fill="#22304d" />
+            <rect x="170" y="101" width="40" height="12" rx="1" fill="#22304d" />
+            <rect x="240" y="101" width="30" height="12" rx="1" fill="#22304d" />
+          </g>
+          <text x="36" y="40" class="bf-label bf-label--star">1. in at an angle</text>
+          <path d="M296 54 C 312 66, 318 78, 318 92" fill="none" stroke="#ffd27a" stroke-width="2" marker-end={`url(#${id}-arrow)`} />
+          <text x="236" y="226" text-anchor="middle" class="bf-label bf-label--star">2. press flat, 3. fix the screw</text>
+        </g>
+      )
+    }
+
+    {
+      kind === "csi" && (
+        <g>
+          <rect x="190" y="200" width="200" height="22" rx="3" class="bf-board" />
+          <text x="378" y="216" text-anchor="end" class="bf-sub bf-sub--sm">carrier board</text>
+          <rect x="230" y="160" width="100" height="40" rx="3" fill="#b6c2d6" />
+          <rect x="230" y="171" width="18" height="12" fill="#060a13" />
+          <line x1="326" y1="160" x2="294" y2="106" stroke="#141f35" stroke-width="12" stroke-linecap="round" />
+          <line x1="326" y1="160" x2="294" y2="106" stroke="#ffd27a" stroke-width="8" stroke-linecap="round" />
+          <text x="270" y="86" text-anchor="end" class="bf-label bf-label--star">1. lift the latch</text>
+          <rect x="30" y="174" width="212" height="7" rx="1" fill="#e8edf6" />
+          {Array.from({ length: 8 }, (_, i) => <rect x={204 + i * 4.6} y="181" width="2.6" height="3" fill="#ffd27a" />)}
+          <text x="30" y="148" class="bf-label">2. slide the ribbon in fully</text>
+          <path d="M60 160 h110" stroke="#ffd27a" stroke-width="2" marker-end={`url(#${id}-arrow)`} />
+          <text x="30" y="214" class="bf-label bf-label--star">contacts face down,</text>
+          <text x="30" y="234" class="bf-label bf-label--star">toward the board</text>
+          <path d="M150 204 C 170 196, 190 190, 204 186" fill="none" stroke="#ffd27a" stroke-width="1.4" />
+          <text x="390" y="246" text-anchor="end" class="bf-sub">3. press the latch down</text>
+        </g>
+      )
+    }
+
+    {
+      kind === "focus" && (
+        <g>
+          <rect x="16" y="14" width="176" height="128" rx="8" fill="#050911" stroke="#6f7f9e" />
+          <rect x="208" y="14" width="176" height="128" rx="8" fill="#050911" stroke="#6f7f9e" />
+          <circle cx="104" cy="78" r="38" fill={`url(#${id}-blur)`} />
+          <circle cx="296" cy="78" r="7" fill={`url(#${id}-sharp)`} />
+          <circle cx="296" cy="78" r="1.8" fill="#fff" />
+          <text x="104" y="172" text-anchor="middle" class="bf-label">out of focus</text>
+          <text x="296" y="172" text-anchor="middle" class="bf-label bf-label--ok">in focus</text>
+        </g>
+      )
+    }
+
+    {
+      kind === "microsd" && (
+        <g>
+          <rect x="30" y="180" width="340" height="18" rx="3" class="bf-board" />
+          <text x="200" y="226" text-anchor="middle" class="bf-sub">carrier board</text>
+          <rect x="120" y="150" width="40" height="30" fill="#22304d" />
+          <rect x="90" y="132" width="210" height="18" rx="2" fill="#1f5f3a" stroke="#7fe3ae" stroke-opacity="0.6" />
+          <text x="110" y="124" class="bf-sub">module</text>
+          <rect x="100" y="98" width="190" height="10" rx="2" fill="#2a3958" />
+          {Array.from({ length: 12 }, (_, i) => <rect x={106 + i * 15.5} y="66" width="6" height="32" fill="#6f7f9e" />)}
+          <text x="196" y="54" text-anchor="middle" class="bf-sub">heatsink and fan</text>
+          <rect x="248" y="150" width="50" height="10" rx="1" fill="#8e9bb2" />
+          <rect x="314" y="151" width="56" height="8" rx="1" fill="#ffd27a" />
+          <path d="M366 170 h-40" stroke="#ffd27a" stroke-width="2" marker-end={`url(#${id}-arrow)`} />
+          <text x="384" y="246" text-anchor="end" class="bf-label bf-label--star">slot under the module</text>
+          <path d="M300 236 C 290 210, 280 186, 274 164" fill="none" stroke="#ffd27a" stroke-width="1.4" />
+        </g>
+      )
+    }
+
+    {
+      kind === "mount" && (
+        <g>
+          <path d="M0 312 H400" stroke="#2a3958" stroke-width="2" />
+          <rect x="186" y="150" width="20" height="162" fill="#8e9bb2" />
+          <rect x="130" y="96" width="132" height="60" rx="8" fill="#18243d" stroke="#6f7f9e" stroke-width="1.6" />
+          <path d="M166 96 A30 30 0 0 1 226 96 Z" fill="rgb(143 208 255 / 0.18)" stroke="#8fd0ff" stroke-width="1.6" />
+          <path d="M112 90 L156 70 M236 70 L280 90" stroke="#b6c2d6" stroke-width="5" stroke-linecap="round" />
+          <text x="300" y="70" class="bf-sub">shade</text>
+          <path d="M150 156 v10 M170 156 v10" stroke="#6f7f9e" stroke-width="6" />
+          <path d="M150 166 C 150 210, 110 210, 96 186 C 86 168, 70 200, 70 240 V 300" fill="none" stroke="#ffcb6b" stroke-width="2.6" />
+          <path d="M170 166 C 170 220, 130 224, 112 206 C 100 194, 90 230, 90 250 V 300" fill="none" stroke="#8fd0ff" stroke-width="2.6" />
+          <text x="16" y="182" class="bf-sub">drip loops</text>
+          <rect x="52" y="282" width="56" height="26" rx="4" fill="#22304d" stroke="#6f7f9e" />
+          <text x="80" y="300" text-anchor="middle" class="bf-mono">RCD</text>
+          <text x="226" y="210" class="bf-label">rigid pole</text>
+          <text x="226" y="232" class="bf-sub">or bracket, no sway</text>
+          <text x="276" y="136" class="bf-sub">glands down</text>
+          <path d="M274 130 C 230 140, 200 156, 176 162" fill="none" stroke="#ffd27a" stroke-width="1.2" />
+        </g>
+      )
+    }
+
+    {
+      kind === "aim" && (
+        <g>
+          <path d="M200 206 L87.6 93.6 A159 159 0 0 1 312.4 93.6 Z" fill="rgb(127 227 174 / 0.16)" stroke="#7fe3ae" stroke-width="1.6" />
+          <path d="M200 206 L200 162 M200 116 L200 46" stroke="#7fe3ae" stroke-width="1.2" stroke-dasharray="4 5" />
+          <path d="M10 206 H390" stroke="#2a3958" stroke-width="2" />
+          <text x="200" y="32" text-anchor="middle" class="bf-sub">90° (straight up)</text>
+          <text x="80" y="86" text-anchor="end" class="bf-sub">45°</text>
+          <text x="320" y="86" class="bf-sub">45°</text>
+          <text x="200" y="132" text-anchor="middle" class="bf-label bf-label--ok">aim the centre</text>
+          <text x="200" y="152" text-anchor="middle" class="bf-label bf-label--ok">anywhere in here</text>
+          <path d="M22 206 v-30 l22 -18 l22 18 v30 Z" fill="#22304d" />
+          <rect x="351" y="176" width="6" height="30" fill="#3a4a6b" />
+          <path d="M334 182 L354 136 L374 182 Z" fill="#1f5f3a" />
+          <text x="200" y="236" text-anchor="middle" class="bf-sub">trees and roofs block the low sky</text>
+          <rect x="190" y="194" width="20" height="12" rx="2" fill="#22304d" />
+          <path d="M192 194 a8 8 0 0 1 16 0 Z" fill="#8fd0ff" />
+        </g>
+      )
+    }
+  </svg>
+  <figcaption>{t.caption}</figcaption>
+</figure>
+
+<style>
+  .bfig {
+    margin: 0;
+  }
+
+  .bfig svg {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .bf-box {
+    fill: var(--surface-2);
+    stroke: #6f7f9e;
+  }
+
+  .bf-icon {
+    fill: #b6c2d6;
+  }
+
+  .bf-label {
+    fill: var(--text);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .bf-label--star {
+    fill: var(--star);
+  }
+
+  .bf-label--ok {
+    fill: var(--ok);
+  }
+
+  .bf-sub {
+    fill: var(--text-2);
+    font-family: var(--font-sans);
+    font-size: 15px;
+  }
+
+  .bf-sub--sm {
+    font-size: 13px;
+    fill: #b6c2d6;
+  }
+
+  .bfig .bf-box + .bf-label {
+    font-size: 14px;
+  }
+
+  .bf-monitor {
+    fill: #141f35;
+    stroke: #6f7f9e;
+  }
+
+  .bf-mono {
+    fill: #e8edf6;
+    font-family: var(--font-mono);
+    font-size: 14px;
+  }
+
+  .bf-mono--dim {
+    fill: #8e9bb2;
+  }
+
+  .bf-mono--hi {
+    fill: #ffd27a;
+    font-weight: 700;
+  }
+
+  .bf-key {
+    fill: #22304d;
+    stroke: #b6c2d6;
+  }
+
+  .bf-keytext {
+    fill: #e8edf6;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .bf-board {
+    fill: #174a2d;
+    stroke: #7fe3ae;
+    stroke-opacity: 0.5;
+  }
+
+  .bf-slot {
+    fill: #0b1220;
+    stroke: #b6c2d6;
+  }
+</style>

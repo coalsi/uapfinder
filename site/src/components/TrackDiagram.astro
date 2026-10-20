@@ -1,0 +1,262 @@
+---
+/**
+ * From fixes to a track: 31 synthetic fixes (10 per second for 3 s, 12 m
+ * noise per axis) of an object at about 200 m/s that is slowly climbing
+ * harder, and what fitting does to the speed estimate. All numbers shown are
+ * computed here from src/lib/trackfit.ts.
+ */
+import { pointToPointSpeeds, simulate, slidingFitSpeeds, TRACK, wholeTrackFit } from "../lib/trackfit";
+
+const fixes = simulate();
+const whole = wholeTrackFit(fixes);
+const p2p = pointToPointSpeeds(fixes);
+const fits = slidingFitSpeeds(fixes);
+const f1 = (n: number) => n.toFixed(1);
+
+// Panel 1: positions (vertical exaggerated so the curvature shows).
+const PX = { x0: 44, x1: 384, y0: 262, y1: 40, xMax: 640, zMin: -30, zMax: 150 };
+const sx = (x: number) => PX.x0 + ((PX.x1 - PX.x0) * x) / PX.xMax;
+const sz = (z: number) => PX.y0 - ((PX.y0 - PX.y1) * (z - PX.zMin)) / (PX.zMax - PX.zMin);
+const rx = sx(TRACK.sigma) - sx(0);
+const ry = sz(0) - sz(TRACK.sigma);
+const exaggeration = ry / rx;
+const curve = Array.from({ length: 61 }, (_, i) => whole.curve((i / 60) * TRACK.seconds))
+  .map((p, i) => `${i ? "L" : "M"}${f1(sx(p.x))} ${f1(sz(p.z))}`)
+  .join(" ");
+
+// Panel 2: speed against time.
+const SV = { x0: 56, x1: 384, y0: 262, y1: 30, tMax: TRACK.seconds, vMax: 700 };
+const tx = (t: number) => SV.x0 + ((SV.x1 - SV.x0) * t) / SV.tMax;
+const vy = (v: number) => SV.y0 - ((SV.y0 - SV.y1) * v) / SV.vMax;
+const truth = Array.from({ length: 31 }, (_, i) => {
+  const t = (i / 30) * TRACK.seconds;
+  return `${i ? "L" : "M"}${f1(tx(t))} ${f1(vy(Math.hypot(TRACK.vx, TRACK.vz + TRACK.az * t)))}`;
+}).join(" ");
+const lower = whole.a - 2 * whole.aSe;
+---
+<div class="track-figs">
+  <figure class="diagram track">
+    <svg viewBox="0 0 400 316" role="img" aria-labelledby="track-pos-title track-pos-desc">
+      <title id="track-pos-title">Successive fixes and the fitted path</title>
+      <desc id="track-pos-desc">
+        Thirty-one fixes of a simulated object, ten per second for three seconds, each drawn with its one-sigma error
+        ellipse of 12 metres. The points scatter around a smooth fitted curve that rises gently from left to right.
+        The vertical scale is exaggerated about {exaggeration.toFixed(1)} times so the curvature shows.
+      </desc>
+      <line x1={PX.x0} y1={PX.y0} x2={PX.x1} y2={PX.y0} class="tr-axis" />
+      <line x1={PX.x0} y1={PX.y0} x2={PX.x0} y2={PX.y1} class="tr-axis" />
+      {[0, 200, 400, 600].map((x) => <text x={f1(sx(x))} y={PX.y0 + 20} text-anchor="middle" class="tr-tick">{x}</text>)}
+      {[0, 50, 100, 150].map((z) => <text x={PX.x0 - 6} y={f1(sz(z) + 5)} text-anchor="end" class="tr-tick">{z}</text>)}
+      <text x={PX.x1} y={PX.y0 + 36} text-anchor="end" class="tr-label">along track, m</text>
+      <text x={PX.x0 + 6} y={PX.y1 - 14} class="tr-label">height gain, m (×{exaggeration.toFixed(1)})</text>
+      {fixes.map((p) => <ellipse cx={f1(sx(p.x))} cy={f1(sz(p.z))} rx={f1(rx)} ry={f1(ry)} class="tr-err" />)}
+      <path d={curve} class="tr-fit" />
+      {fixes.map((p) => <circle cx={f1(sx(p.x))} cy={f1(sz(p.z))} r="2.4" class="tr-pt" />)}
+    </svg>
+    <figcaption>Each fix with its 1σ error (simulated: 12 m per axis). The line is a parabola fitted to all of them.</figcaption>
+  </figure>
+
+  <figure class="diagram track">
+    <svg viewBox="0 0 400 316" role="img" aria-labelledby="track-v-title track-v-desc">
+      <title id="track-v-title">Speed from point-to-point differences versus fitted speed</title>
+      <desc id="track-v-desc">
+        Speed against time over three seconds. Speeds from differences between consecutive fixes scatter wildly,
+        from about {Math.round(Math.min(...p2p.map((p) => p.v)))} to {Math.round(Math.max(...p2p.map((p) => p.v)))}
+        metres per second. Speeds from straight-line fits to the last second of fixes stay close to the true speed of
+        about 200 metres per second, each with an error bar of about {Math.round(fits[0]!.se)} metres per second.
+      </desc>
+      <line x1={SV.x0} y1={SV.y0} x2={SV.x1} y2={SV.y0} class="tr-axis" />
+      <line x1={SV.x0} y1={SV.y0} x2={SV.x0} y2={SV.y1} class="tr-axis" />
+      {[0, 1, 2, 3].map((t) => <text x={f1(tx(t))} y={SV.y0 + 20} text-anchor="middle" class="tr-tick">{t}</text>)}
+      {[0, 200, 400, 600].map((v) => <text x={SV.x0 - 6} y={f1(vy(v) + 5)} text-anchor="end" class="tr-tick">{v}</text>)}
+      <text x={SV.x1} y={SV.y0 + 36} text-anchor="end" class="tr-label">time, s</text>
+      <text x={SV.x0 + 6} y={SV.y1 - 10} class="tr-label">speed, m/s</text>
+      <path d={truth} class="tr-truth" />
+      {p2p.map((p) => <circle cx={f1(tx(p.t))} cy={f1(vy(p.v))} r="3" class="tr-raw" />)}
+      {
+        fits.map((p) => (
+          <g class="tr-fitpt">
+            <line x1={f1(tx(p.t))} x2={f1(tx(p.t))} y1={f1(vy(p.v - 2 * p.se))} y2={f1(vy(p.v + 2 * p.se))} />
+            <line x1={f1(tx(p.t) - 6)} x2={f1(tx(p.t) + 6)} y1={f1(vy(p.v - 2 * p.se))} y2={f1(vy(p.v - 2 * p.se))} />
+            <line x1={f1(tx(p.t) - 6)} x2={f1(tx(p.t) + 6)} y1={f1(vy(p.v + 2 * p.se))} y2={f1(vy(p.v + 2 * p.se))} />
+            <circle cx={f1(tx(p.t))} cy={f1(vy(p.v))} r="4.5" />
+          </g>
+        ))
+      }
+    </svg>
+    <ul class="track-key">
+      <li><span class="k k-raw" aria-hidden="true"></span> from consecutive fixes, 0.1 s apart</li>
+      <li><span class="k k-fit" aria-hidden="true"></span> line fitted to the last 1 s, ±2σ</li>
+      <li><span class="k k-truth" aria-hidden="true"></span> true speed in the simulation</li>
+    </ul>
+  </figure>
+</div>
+<dl class="track-results">
+  <div>
+    <dt>Speed at the last fix (whole-track fit)</dt>
+    <dd>{Math.round(whole.v)} ± {Math.round(whole.vSe)} m/s</dd>
+  </div>
+  <div>
+    <dt>Acceleration (whole-track fit)</dt>
+    <dd>{Math.round(whole.a)} ± {Math.round(whole.aSe)} m/s²</dd>
+  </div>
+  <div>
+    <dt>Acceleration used for flags: 2σ lower bound</dt>
+    <dd>{lower > 0 ? `${Math.round(lower)} m/s²` : "0 m/s²"}</dd>
+  </div>
+</dl>
+<p class="small muted">
+  Simulated data (true acceleration {TRACK.az} m/s²), not a real observation. The values are the actual outputs of
+  the fits shown.
+</p>
+
+<style>
+  .track-figs {
+    display: grid;
+    gap: 16px;
+  }
+
+  @media (min-width: 820px) {
+    .track-figs {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  .track-figs > * {
+    min-width: 0;
+  }
+
+  .track {
+    margin: 0;
+  }
+
+  .track svg {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .tr-axis {
+    stroke: #6f7f9e;
+    stroke-width: 1.2;
+  }
+
+  .tr-tick {
+    fill: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 14px;
+  }
+
+  .tr-label {
+    fill: var(--text-2);
+    font-family: var(--font-sans);
+    font-size: 15px;
+  }
+
+  .tr-err {
+    fill: rgb(143 208 255 / 0.08);
+    stroke: rgb(143 208 255 / 0.45);
+    stroke-width: 1;
+  }
+
+  .tr-pt {
+    fill: #8fd0ff;
+  }
+
+  .tr-fit {
+    fill: none;
+    stroke: #ffd27a;
+    stroke-width: 2.4;
+  }
+
+  .tr-truth {
+    fill: none;
+    stroke: #7fe3ae;
+    stroke-width: 1.6;
+    stroke-dasharray: 6 5;
+  }
+
+  .tr-raw {
+    fill: #8e9bb2;
+    opacity: 0.75;
+  }
+
+  .tr-fitpt line {
+    stroke: #ffd27a;
+    stroke-width: 1.6;
+  }
+
+  .tr-fitpt circle {
+    fill: #ffd27a;
+    stroke: var(--bg);
+    stroke-width: 1.5;
+  }
+
+  .track-key {
+    list-style: none;
+    padding: 0;
+    margin: 10px 0 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    color: var(--text-2);
+    font-size: 0.88rem;
+  }
+
+  .track-key li {
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .k {
+    display: inline-block;
+    flex: none;
+  }
+
+  .k-raw {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #8e9bb2;
+  }
+
+  .k-fit {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #ffd27a;
+  }
+
+  .k-truth {
+    width: 18px;
+    border-top: 2px dashed #7fe3ae;
+  }
+
+  .track-results {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    margin: 18px 0 8px;
+  }
+
+  .track-results div {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 12px 16px;
+  }
+
+  .track-results dt {
+    color: var(--muted);
+    font-size: 0.86rem;
+  }
+
+  .track-results dd {
+    margin: 0;
+    font-size: 1.35rem;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+  }
+</style>

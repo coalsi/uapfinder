@@ -61,6 +61,38 @@ figures as indicative.
   - FlightAware Pro Stick Plus and a 1090 MHz antenna (£24.90) at The Pi Hut: https://thepihut.com/products/flightaware-pro-stick-plus-usb-sdr-ads-b-receiver
 - **Enclosure (estimate):** all-sky camera parts list (100 mm acrylic dome ≈ €16, 2.8 W heater ring ≈ €18.50 + relay ≈ €6.80): https://allskykamera.space/kamerabau.php?lang=en
 
+## Node hardware facts used on /device/ and /build/ (researched 2026-10-20)
+
+NVIDIA's documentation site could not be fetched directly from the research
+environment; the facts below were confirmed from search-engine snapshots of
+the pages listed, and the guide words anything uncertain cautiously ("marked
+on the board", "check your module"). Re-check against the board before launch.
+
+- **Appliance behaviour** (pins, services, addresses, hotspot, claim codes, star calibration schedule, image contents, firmware note): `docs/NODE_APPLIANCE.md`
+- **Firmware gate: UEFI version must be 36.x or later for JetPack 6; older kits boot NVIDIA's JetPack 5.1.3 SD image, then install `nvidia-l4t-jetson-orin-nano-qspi-updater` and reboot; several reboots; do not remove power; version read from the UEFI screen (Esc at start-up)**
+  - NVIDIA getting-started guide: https://developer.nvidia.com/embedded/learn/get-started-jetson-orin-nano-devkit
+  - NVIDIA "JetPack 6.x Update Path": https://docs.nvidia.com/jetson/orin-nano-devkit/user-guide/latest/update_firmware.html
+  - Jetson AI Lab initial setup (Esc, version under "Not Specified", 36.0 threshold, QSPI updater): https://www.jetson-ai-lab.com/tutorials/initial-setup-jetson-orin-nano
+  - Forum, update can take 15–20 minutes to prepare before the reboot: https://forums.developer.nvidia.com/t/not-able-to-do-firmware-update-to-36-x-on-jetson-orin-nano/298460
+- **microSD slot on the underside of the module; 64 GB+ card; DisplayPort output; two M.2 Key M slots (2280 PCIe x4, 2230 PCIe x2); two 22-pin CSI connectors CAM0/CAM1; 19 V supply into the DC barrel jack**
+  - NVIDIA quick start: https://docs.nvidia.com/jetson/orin-nano-devkit/user-guide/latest/quick_start.html
+  - NVIDIA hardware layout: https://docs.nvidia.com/jetson/orin-nano-devkit/user-guide/latest/hardware_layout.html
+  - Forum, microSD slot is on the module: https://forums.developer.nvidia.com/t/is-there-a-micro-sd-card-slot-on-the-jetson-orin-nano-orin-nx-modules/255176
+- **M.2 slot under the carrier board (flip the kit over, remove the retaining screw, insert at an angle, refit the screw; NVMe only, not SATA)**: `docs/NODE_APPLIANCE.md`; video guide summary https://lilys.ai/ko/notes/nvidia-20251111/jetson-orin-nano-ssd-install-guide ; JetsonHacks https://jetsonhacks.com/2023/05/30/jetson-orin-nano-tutorial-ssd-install-boot-and-jetpack-setup/
+- **USB-C is not a power input on the developer kit** (forum): https://forums.developer.nvidia.com/t/powering-the-nano-orin/366665
+- **CSI ribbon: the 22-pin end goes into CAM0 with the metal contacts facing down, toward the board; latch-type connector parallel to the board**
+  - Arm Learning Path, Jetson Orin Nano setup: https://learn.arm.com/learning-paths/embedded-and-microcontrollers/jetson_object_detection/2setup/
+  - JetsonHacks, CSI cameras on the Orin Nano: https://jetsonhacks.com/2023/04/05/using-the-jetson-orin-nano-with-csi-cameras/
+  - Reversed cables as the usual cause of a camera not being detected (Arducam forum): https://forum.arducam.com/t/arducam-imx477-not-detected-on-jetson-orin-nano-i2c-error-121/9273
+- **40-pin header: pin 7 = PAC.06 (GPIO09); pins 8/10 UART (`/dev/ttyTHS1` on JetPack 6); pin 1 3.3 V; 3.3 V signal levels**
+  - Forum, pin 7 = PAC.06: https://forums.developer.nvidia.com/t/guidance-on-enabling-gps-pps-input-on-jetson-orin-nano-developer-kit/376687
+  - Forum, UART on pins 8/10: https://forums.developer.nvidia.com/t/how-to-access-uart1-on-expansion-pins-8-10/328934
+  - Carrier board specification (pin descriptions, J12): https://uelectronics.com/wp-content/uploads/2023/05/Jetson-Orin-Nano-DevKit-Carrier-Board-Specification.pdf
+  - Pin 1's physical position was not confirmed from a fetchable source, so the guide tells readers to find the board's pin 1 mark and confirm 3.3 V / 5 V with a meter.
+- **balenaEtcher flashes compressed images and verifies them**: https://etcher.balena.io/
+- **Adafruit Ultimate GPS FIX LED (about 1 Hz while searching, once every 15 s with a fix)**: https://www.adafruit.com/product/746
+- **Track illustration, stereo and timing diagrams**: drawn from computed geometry (`src/lib/stereo.ts`, `src/lib/trackfit.ts`, tested in `tests/unit/diagrams.test.ts`) with the defaults in `edge/skynet_edge/config.py` (60 fps, 10 Hz) and `server/skynet_server/config.py` (50 ms window, 250 ms interpolation gap; `matchmaker.py` interpolates to the packet time).
+
 ## Power cost
 
 - US EIA Short-Term Energy Outlook, 2026 average residential price ≈ 18.3 ¢/kWh: https://www.eia.gov/outlooks/steo/tables/pdf/SF02.pdf
