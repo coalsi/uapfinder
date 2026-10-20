@@ -54,7 +54,7 @@ def test_vercel_json_routes_api_to_the_function():
 
 def test_default_vercel_project_is_static_only():
     cfg = json.loads((ROOT / "vercel.json").read_text())
-    assert set(cfg) == {"$schema", "buildCommand", "outputDirectory"}
+    assert set(cfg) == {"$schema", "installCommand", "buildCommand", "outputDirectory"}
     # No api/ directory: Vercel would otherwise deploy it as functions.
     assert not (ROOT / "api").exists() and not (ROOT / "requirements.txt").exists()
 

@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "echo \"dependencies are installed per app by scripts/build-web.sh\"",
   "buildCommand": "bash scripts/build-web.sh",
   "outputDirectory": "site/dist"
 }

@@ -24,10 +24,14 @@ the map shows a clearly labelled demo network, and the site's live stats show
 3. On **Configure Project**:
    * **Root Directory**: `./` (the repository root). If Vercel pre-filled
      `site` or `dashboard`, click **Edit** and choose the top level.
-   * **Framework Preset**: **Other**.
+   * **Application Preset** (also called Framework Preset): **Other**. When
+     Vercel detects several apps it pre-selects **Services**, its beta mode
+     for bundling separate apps; open the dropdown and pick **Other**
+     instead. This repository is one static build.
    * **Build and Output Settings**: leave the overrides **off**. `vercel.json`
-     supplies them: build command `bash scripts/build-web.sh`, output
-     directory `site/dist`. (If a field is already filled in from a detected
+     supplies them: install command (a no-op; each app installs its own
+     dependencies during the build), build command `bash scripts/build-web.sh`,
+     output directory `site/dist`. (If a field is already filled in from a detected
      framework, turn its override off, or enter exactly these values.)
    * **Environment Variables**: none are needed for the first deploy.
 4. Click **Deploy**. The build takes a minute or two (two `npm ci` installs
