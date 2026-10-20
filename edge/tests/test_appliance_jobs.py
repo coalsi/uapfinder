@@ -56,6 +56,7 @@ class FakeStarcal:
 NODE = {"mode": "running", "camera": {"width": 1920, "height": 1080, "fov_h_deg": 90.0},
         "attitude": {"yaw_deg": 5.0, "pitch_deg": 80.0, "roll_deg": 0.0}, "pointing_source": "prior"}
 FIX = {"latitude": 33.6, "longitude": -112.4, "altitude_m": 350.0, "mode": 3, "t_ns": NOW}
+CLOCK = {"clock_ref": "PPS", "clock_stratum": 1, "clock_offset_ms": 0.002, "clock_leap": "Normal"}
 CAL = {"version": 1, "ok": True, "t_ns": NOW - 2 * DAY, "width": 1920, "height": 1080, "yaw_deg": 1.0,
        "pitch_deg": 70.0, "roll_deg": 0.0}
 
@@ -67,6 +68,9 @@ CAL = {"version": 1, "ok": True, "t_ns": NOW - 2 * DAY, "width": 1920, "height":
     (dict(fix=None), False, "no GPS fix"),
     (dict(fix=dict(FIX, mode=1)), False, "no GPS fix"),
     (dict(fix=dict(FIX, t_ns=NOW - 600 * 10**9)), False, "no GPS fix"),
+    (dict(clock=None), False, "clock"),
+    (dict(clock=dict(CLOCK, clock_leap="Not synchronised")), False, "clock"),
+    (dict(clock=dict(CLOCK, clock_offset_ms=-2500.0)), False, "clock"),
     (dict(calib=CAL), False, "days old"),
     (dict(starcal=FakeStarcal(dark=False)), False, "not dark"),
     (dict(), True, "dark"),
@@ -74,7 +78,7 @@ CAL = {"version": 1, "ok": True, "t_ns": NOW - 2 * DAY, "width": 1920, "height":
     (dict(calib=CAL, force=True), True, "dark"),
 ])
 def test_decide(kw, run, reason):
-    args = dict(now_ns=NOW, node=NODE, node_age_s=3.0, fix=FIX, calib=None, starcal=FakeStarcal())
+    args = dict(now_ns=NOW, node=NODE, node_age_s=3.0, fix=FIX, calib=None, starcal=FakeStarcal(), clock=CLOCK)
     args.update(kw)
     d = starcal_job.decide(**args)
     assert d.run is run and reason in d.reason
@@ -89,40 +93,40 @@ def fake_stacker(shape=(1080, 1920)):
 def test_run_job_writes_calibration(paths):
     write_json(paths.node_json, dict(NODE, fix=FIX))
     sc = FakeStarcal()
-    out = starcal_job.run_job(paths, starcal=sc, now_ns=NOW, stacker=fake_stacker())
+    out = starcal_job.run_job(paths, clock_source=lambda: CLOCK, starcal=sc, now_ns=NOW, stacker=fake_stacker())
     assert out["ok"] is True and out["stars_matched"] == 40
     cal = load_calibration(paths.calibration)
     assert cal["yaw_deg"] == 10.0 and cal["width"] == 1920 and cal["t_ns"] == NOW and cal["source"] == "starcal"
     obs, prior = sc.calls[0][2], sc.calls[0][3]
     assert obs == ("obs", 33.6, -112.4, 350.0)
-    assert prior == ("prior", {"width": 1920, "height": 1080, "fov_h_deg": 90.0})  # heading unknown
+    assert prior == ("prior", {"width": 1920, "height": 1080, "fov_h_deg": 90.0, **starcal_job.PRIOR_MOUNT})  # heading unknown
     assert json.loads((paths.state / "starcal-last.json").read_text())["ok"] is True
     # Fresh calibration now: the next run skips.
-    assert starcal_job.run_job(paths, starcal=sc, now_ns=NOW + 60 * 10**9, stacker=fake_stacker())["attempted"] is False
+    assert starcal_job.run_job(paths, clock_source=lambda: CLOCK, starcal=sc, now_ns=NOW + 60 * 10**9, stacker=fake_stacker())["attempted"] is False
 
 
 def test_run_job_imu_prior_and_failures(paths):
     write_json(paths.node_json, dict(NODE, fix=FIX, pointing_source="imu"))
     sc = FakeStarcal(ok=False)
-    out = starcal_job.run_job(paths, starcal=sc, now_ns=NOW, stacker=fake_stacker())
+    out = starcal_job.run_job(paths, clock_source=lambda: CLOCK, starcal=sc, now_ns=NOW, stacker=fake_stacker())
     assert out["ok"] is False and "too few" in out["reason"] and not paths.calibration.exists()
     assert sc.calls[0][3][1]["sigma_deg"] == starcal_job.PRIOR_IMU_SIGMA_DEG
-    out = starcal_job.run_job(paths, starcal=FakeStarcal(raise_=True), now_ns=NOW, stacker=fake_stacker())
+    out = starcal_job.run_job(paths, clock_source=lambda: CLOCK, starcal=FakeStarcal(raise_=True), now_ns=NOW, stacker=fake_stacker())
     assert out["ok"] is False and "solver error" in out["reason"]
-    out = starcal_job.run_job(paths, starcal=FakeStarcal(), now_ns=NOW, stacker=lambda p: None)
+    out = starcal_job.run_job(paths, clock_source=lambda: CLOCK, starcal=FakeStarcal(), now_ns=NOW, stacker=lambda p: None)
     assert out["ok"] is False and "no frames" in out["reason"]
     save_calibration(paths.calibration, CAL)
     before = paths.calibration.read_text()
-    starcal_job.run_job(paths, starcal=FakeStarcal(ok=False), now_ns=NOW, stacker=fake_stacker())
+    starcal_job.run_job(paths, clock_source=lambda: CLOCK, starcal=FakeStarcal(ok=False), now_ns=NOW, stacker=fake_stacker())
     assert paths.calibration.read_text() == before
 
 
 def test_run_job_without_fix_in_node_asks_gpsd(paths):
     write_json(paths.node_json, dict(NODE, mode="waiting"))
-    out = starcal_job.run_job(paths, starcal=FakeStarcal(), now_ns=NOW, stacker=fake_stacker(),
+    out = starcal_job.run_job(paths, clock_source=lambda: CLOCK, starcal=FakeStarcal(), now_ns=NOW, stacker=fake_stacker(),
                               fix_source=lambda: None)
     assert out == {"attempted": False, "reason": "no GPS fix"}
-    out = starcal_job.run_job(paths, starcal=FakeStarcal(), now_ns=NOW, stacker=fake_stacker(),
+    out = starcal_job.run_job(paths, clock_source=lambda: CLOCK, starcal=FakeStarcal(), now_ns=NOW, stacker=fake_stacker(),
                               fix_source=lambda: dict(FIX))
     assert out["ok"] is True
 
@@ -445,7 +449,7 @@ def test_scheduler_with_the_real_star_calibration(paths):
                                  "pointing_source": "prior",
                                  "fix": {"latitude": lat, "longitude": lon, "altitude_m": alt, "mode": 3,
                                          "t_ns": t_night}})
-    out = starcal_job.run_job(paths, starcal=sc, now_ns=t_night,
+    out = starcal_job.run_job(paths, clock_source=lambda: CLOCK, starcal=sc, now_ns=t_night,
                               stacker=lambda p: (image, {"t_ns": t_night, "width": 1920, "height": 1080}))
     assert out["ok"] is True, out
     cal = load_calibration(paths.calibration)

@@ -219,6 +219,18 @@ def _sky_bitmap(az: np.ndarray, el: np.ndarray, tol_deg: float, res: float, el_m
     return np.cumsum(diff, axis=1)[:, :n_az] > 0
 
 
+def _attitude_matrices(yaw_deg: np.ndarray, pitch_deg: np.ndarray, roll_deg: np.ndarray) -> np.ndarray:
+    """Vectorised :func:`attitude_matrix` -> (N, 3, 3)."""
+    y, p, r = np.radians(yaw_deg), np.radians(pitch_deg), np.radians(roll_deg)
+    cy, sy, cp, sp_, cr, sr = np.cos(y), np.sin(y), np.cos(p), np.sin(p), np.cos(r), np.sin(r)
+    fwd = np.stack([cp * sy, cp * cy, sp_], axis=-1)
+    right0 = np.stack([cy, -sy, np.zeros_like(y)], axis=-1)
+    down0 = np.cross(fwd, right0)
+    right = cr[:, None] * right0 + sr[:, None] * down0
+    down = cr[:, None] * down0 - sr[:, None] * right0
+    return np.stack([right, down, fwd], axis=1)
+
+
 def _grid(center: float, half: float, step: float) -> np.ndarray:
     n = max(0, int(math.ceil(half / step - 1e-9)))
     return center + step * np.arange(-n, n + 1)
@@ -267,6 +279,10 @@ def _coarse_search(det: Detections, cat_az, cat_el, cat_mag, prior: Prior, intr0
     # tolerance per field-angle zone: grid quantisation (pitch/roll 1 deg -> up
     # to 0.5 deg, bitmap cells 0.2 deg) + focal length/k1 grid steps x angle
     tols = (0.65, 0.9, 1.3, 2.0)
+    if prior.pitch_deg is None or prior.roll_deg is None:
+        # first pass of a blind search: 2-deg pitch/roll steps, so up to 1 deg more
+        # error; it only ranks hypotheses for the fine pass that follows
+        tols = tuple(t + 0.7 for t in tols)
     bitmaps = np.stack([_sky_bitmap(cat_az[order], cat_el[order], t, res, el_min) for t in tols])
     n_az = bitmaps.shape[2]
     # tolerance zone per detection by its field angle
@@ -286,7 +302,7 @@ def _coarse_search(det: Detections, cat_az, cat_el, cat_mag, prior: Prior, intr0
         s = prior.sigma(which)
         return _grid(v, max(2.5 * s, step), step), False
 
-    pitches, pitch_unknown = angle_grid("pitch", -10.0, 90.0 + 1e-9, 1.0)
+    pitches, pitch_unknown = angle_grid("pitch", -10.0, 90.0 + 1e-9, 2.0)
     pitches = np.unique(np.clip(pitches, -89.0, 90.0))
     rolls, roll_unknown = angle_grid("roll", -180.0, 180.0, 2.0 if pitch_unknown else step)
     if roll_unknown and prior.yaw_deg is None and pitches.min() > 80.0:
@@ -326,7 +342,6 @@ def _coarse_search(det: Detections, cat_az, cat_el, cat_mag, prior: Prior, intr0
         n_combo = len(pitches) * len(rolls) * len(fscale) * len(k1s)
         thinned = True
 
-    best: List[Tuple[float, float, float, float, float, float]] = []
     # Flat lookup table: per zone, n_el rows + one all-false row (below the
     # horizon/outside), each row doubled in azimuth so that az + yaw needs no modulo.
     n_el = bitmaps.shape[1]
@@ -334,43 +349,49 @@ def _coarse_search(det: Detections, cat_az, cat_el, cat_mag, prior: Prior, intr0
     table[:, :n_el, :n_az] = bitmaps
     table[:, :n_el, n_az:] = bitmaps
     table = table.ravel()
-    prs = [(float(p), float(r)) for p in pitches for r in rolls]
-    Ms = np.stack([attitude_matrix(0.0, p, r) for p, r in prs])         # (n_pr, 3, 3)
+    pp, rr = np.meshgrid(pitches.astype(float), rolls.astype(float), indexing="ij")
+    pp, rr = pp.ravel(), rr.ravel()
+    Ms = _attitude_matrices(np.zeros_like(pp), pp, rr)                # (n_pr, 3, 3)
     shifts = shifts.astype(np.intp)
     chunk = max(1, int(4e6 // (n_c * len(shifts))))
-    for fs in fscale:
-        for k1 in k1s:
-            intr = intr0.with_(fx=intr0.fx * fs, fy=intr0.fy * fs, k1=float(k1), k2=intr0.k2 if not fit_intr else 0.0)
-            rays = unproject(uv, intr)
-            enu = np.einsum("dk,pkj->pdj", rays, Ms)                    # (n_pr, n_c, 3): rays @ M
-            az0 = np.degrees(np.arctan2(enu[..., 0], enu[..., 1])) % 360.0
-            el = np.degrees(np.arcsin(np.clip(enu[..., 2], -1, 1)))
-            ei = np.floor((el - el_min) / res).astype(np.intp)
-            ei = np.where((ei >= 0) & (ei < n_el), ei, n_el)
-            ai = np.minimum(np.floor(az0 / res).astype(np.intp), n_az - 1)
-            base = (zone[None, :] * (n_el + 1) + ei) * (2 * n_az) + ai  # (n_pr, n_c)
-            for c0 in range(0, len(prs), chunk):
-                b = base[c0:c0 + chunk]
-                score = table[b[:, :, None] + shifts[None, None, :]].sum(axis=1, dtype=np.int32)  # (n, n_yaw)
-                k = min(4, score.shape[1])
-                top = np.argpartition(-score, k - 1, axis=1)[:, :k]
-                for i in range(b.shape[0]):
-                    p, r = prs[c0 + i]
-                    for j in top[i]:
-                        best.append((float(score[i, j]), float(shifts[j] * res), p, r, float(fs), float(k1)))
-    best.sort(key=lambda x: -x[0])
-    cands: List[_Candidate] = []
-    for sc, yaw, p, r, fs, k1 in best:
-        M = attitude_matrix(yaw, p, r)
-        dup = False
-        for c in cands:
-            if np.degrees(math.acos(min(1.0, (np.trace(c.M @ M.T) - 1) / 2))) < 3.0:
-                dup = True
-                break
-        if dup:
-            continue
+    keep = 4
+    rec_score, rec_yaw, rec_pr, rec_fk = [], [], [], []
+    fks = [(float(fs), float(k1)) for fs in fscale for k1 in k1s]
+    for fki, (fs, k1) in enumerate(fks):
         intr = intr0.with_(fx=intr0.fx * fs, fy=intr0.fy * fs, k1=k1, k2=intr0.k2 if not fit_intr else 0.0)
-        cands.append(_Candidate(sc, M, intr))
+        rays = unproject(uv, intr)
+        enu = np.einsum("dk,pkj->pdj", rays, Ms)                        # (n_pr, n_c, 3): rays @ M
+        az0 = np.degrees(np.arctan2(enu[..., 0], enu[..., 1])) % 360.0
+        el = np.degrees(np.arcsin(np.clip(enu[..., 2], -1, 1)))
+        ei = np.floor((el - el_min) / res).astype(np.intp)
+        ei = np.where((ei >= 0) & (ei < n_el), ei, n_el)
+        ai = np.minimum(np.floor(az0 / res).astype(np.intp), n_az - 1)
+        base = (zone[None, :] * (n_el + 1) + ei) * (2 * n_az) + ai      # (n_pr, n_c)
+        for c0 in range(0, len(pp), chunk):
+            bb = base[c0:c0 + chunk]
+            score = table[bb[:, :, None] + shifts[None, None, :]].sum(axis=1, dtype=np.int32)  # (n, n_yaw)
+            k = min(keep, score.shape[1])
+            top = np.argpartition(-score, k - 1, axis=1)[:, :k]
+            rows = np.arange(bb.shape[0])[:, None]
+            rec_score.append(score[rows, top].ravel())
+            rec_yaw.append(shifts[top].ravel())
+            rec_pr.append(np.repeat(np.arange(c0, c0 + bb.shape[0]), k))
+            rec_fk.append(np.full(bb.shape[0] * k, fki))
+    sc_all = np.concatenate(rec_score)
+    yaw_all = np.concatenate(rec_yaw)
+    pr_all = np.concatenate(rec_pr)
+    fk_all = np.concatenate(rec_fk)
+    n_top = min(len(sc_all), 400)
+    order_top = np.argpartition(-sc_all, n_top - 1)[:n_top]
+    order_top = order_top[np.argsort(-sc_all[order_top], kind="stable")]
+    cands: List[_Candidate] = []
+    for i in order_top:
+        M = attitude_matrix(float(yaw_all[i] * res), float(pp[pr_all[i]]), float(rr[pr_all[i]]))
+        if any(np.degrees(math.acos(min(1.0, (np.trace(c.M @ M.T) - 1) / 2))) < 3.0 for c in cands):
+            continue
+        fs, k1 = fks[fk_all[i]]
+        intr = intr0.with_(fx=intr0.fx * fs, fy=intr0.fy * fs, k1=k1, k2=intr0.k2 if not fit_intr else 0.0)
+        cands.append(_Candidate(float(sc_all[i]), M, intr))
         if len(cands) >= (n_cands or sp.coarse_candidates):
             break
     info = {"coarse_wide": bool(thinned or pitch_unknown or roll_unknown or len(pitches) * len(rolls) > 400),"coarse_best": cands[0].score if cands else 0, "coarse_second": cands[1].score if len(cands) > 1 else 0,

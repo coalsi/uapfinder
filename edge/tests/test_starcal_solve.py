@@ -139,6 +139,25 @@ def test_narrow_lens():
     assert mapping_error_deg(r, s) < 0.02
 
 
+def test_no_orientation_prior_at_all():
+    # What the scheduler sends without an IMU: only the image size and nominal lens.
+    s, img = render(k1=-0.08, fx=965.0, fy=965.0, yaw_deg=10.0, pitch_deg=88.0, roll_deg=-2.0, seed=17)
+    r = calibrate(img, T_NIGHT, ZURICH, Prior(1920, 1080, 90.0))
+    assert r.ok, r.reason
+    assert rotation_error_deg(r, s) < 0.02
+    assert mapping_error_deg(r, s) < 0.02
+    assert r.elapsed_s < 40.0
+
+
+def test_coarse_imu_prior():
+    # Orientation sensor reading 10-15 deg off with sigma 15 deg
+    s, img = render(k1=-0.08, fx=965.0, fy=965.0, yaw_deg=130.0, pitch_deg=45.0, roll_deg=3.0, seed=18)
+    r = calibrate(img, T_NIGHT, ZURICH, Prior(1920, 1080, 90.0, yaw_deg=140.0, pitch_deg=50.0, roll_deg=-5.0,
+                                              sigma_deg=15.0))
+    assert r.ok, r.reason
+    assert rotation_error_deg(r, s) < 0.02
+
+
 def test_fixed_intrinsics_attitude_only():
     s, img = render(k1=-0.08, fx=965.0, fy=965.0, yaw_deg=77.0, pitch_deg=35.0, roll_deg=1.0, seed=16)
     prior = Prior(1920, 1080, 90.0, pitch_deg=35.0, roll_deg=0.0, sigma_deg=3.0, fx=965.0, fy=965.0,
@@ -179,12 +198,14 @@ def test_too_few_stars_fails():
     assert r.stars_matched < SolveParams().min_stars or "too few" in r.reason
 
 
-@pytest.mark.parametrize("case", ["mirrored", "wrong_site", "wrong_time", "wrong_prior"])
+@pytest.mark.parametrize("case", ["mirrored", "mirrored_no_prior", "wrong_site", "wrong_time", "wrong_prior"])
 def test_inconsistent_inputs_fail(case):
     s, img = render(k1=-0.08, fx=965.0, fy=965.0, yaw_deg=130.0, pitch_deg=45.0, roll_deg=3.0, seed=25)
     obs, t, prior = ZURICH, T_NIGHT, Prior(1920, 1080, 90.0, pitch_deg=44.0, roll_deg=2.0, sigma_deg=2.0)
-    if case == "mirrored":            # no rotation reproduces a mirrored sky
+    if case.startswith("mirrored"):   # no rotation reproduces a mirrored sky
         img = img[:, ::-1].copy()
+        if case == "mirrored_no_prior":  # the widest search: highest chance of a false match
+            prior = Prior(1920, 1080, 90.0)
     elif case == "wrong_site":
         obs = Observer(10.0, 8.0, 500.0)
     elif case == "wrong_time":        # the sky turned 15 deg about the pole; the prior forbids that attitude

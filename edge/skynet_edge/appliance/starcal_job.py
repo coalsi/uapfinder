@@ -6,6 +6,9 @@ The service exits at once unless all of these hold (``decide``):
 2. the node process is running (fresh ``/run/skynet/node.json``): it owns
    the camera and supplies the frames;
 3. there is a GPS fix (from the node, else straight from gpsd);
+3a. chrony says the clock is synchronised to within ``CLOCK_MAX_OFFSET_MS``
+   (a wrong clock looks like a rotated camera to the solver and can give a
+   confident but wrong pointing);
 4. there is no good calibration yet, or it is more than 7 days old;
 5. ``starcal.is_dark_enough(now, observer)`` (Sun more than 12 deg below the horizon).
 
@@ -28,6 +31,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Optional, Tuple
 
+from ..health import chrony_tracking
 from .calibration import from_result, load_calibration, save_calibration
 from .paths import Paths
 from .util import file_age_s, read_json, write_json
@@ -41,6 +45,10 @@ STACK_FRAMES = 24
 STACK_EVERY = 5
 STACK_TIMEOUT_S = 120.0
 PRIOR_IMU_SIGMA_DEG = 15.0
+# Without an orientation sensor: the build guide says to aim between 45 deg up
+# and straight up, level, so pitch/roll are loosely known and the heading not.
+PRIOR_MOUNT = dict(pitch_deg=67.5, pitch_sigma_deg=15.0, roll_deg=0.0, roll_sigma_deg=10.0)
+CLOCK_MAX_OFFSET_MS = 1000.0
 
 
 def load_starcal() -> Optional[Any]:
@@ -99,7 +107,8 @@ def gpsd_fix(addr: Tuple[str, int] = ("127.0.0.1", 2947), timeout_s: float = 3.0
 
 def decide(now_ns: int, node: Optional[Dict[str, Any]], node_age_s: Optional[float],
            fix: Optional[Dict[str, Any]], calib: Optional[Dict[str, Any]], starcal: Any,
-           force: bool = False, max_age_days: float = MAX_AGE_DAYS) -> Decision:
+           force: bool = False, max_age_days: float = MAX_AGE_DAYS,
+           clock: Optional[Dict[str, Any]] = None) -> Decision:
     if starcal is None:
         return Decision(False, "star calibration module not available")
     if node is None or node_age_s is None or node_age_s > NODE_STATUS_MAX_AGE_S:
@@ -107,6 +116,9 @@ def decide(now_ns: int, node: Optional[Dict[str, Any]], node_age_s: Optional[flo
     if fix is None or int(fix.get("mode", 0)) < 2 or (
             fix.get("t_ns") and (now_ns - int(fix["t_ns"])) / 1e9 > FIX_MAX_AGE_S):
         return Decision(False, "no GPS fix")
+    if clock is None or str(clock.get("clock_leap", "")).lower().startswith("not") or (
+            abs(float(clock.get("clock_offset_ms") or 0.0)) > CLOCK_MAX_OFFSET_MS):
+        return Decision(False, "clock not synchronised yet")
     observer = (float(fix["latitude"]), float(fix["longitude"]), float(fix["altitude_m"]))
     if calib is not None and not force:
         age_days = (now_ns - int(calib["t_ns"])) / 86400e9
@@ -130,7 +142,8 @@ def make_prior(starcal: Any, node: Dict[str, Any]) -> Any:
     if node.get("pointing_source") == "imu" and att:
         kwargs.update(yaw_deg=att.get("yaw_deg"), pitch_deg=att.get("pitch_deg"), roll_deg=att.get("roll_deg"),
                       sigma_deg=PRIOR_IMU_SIGMA_DEG)
-    # Otherwise: "pointing up, heading unknown" -> the optional angles stay None.
+    else:
+        kwargs.update(PRIOR_MOUNT)  # heading unknown
     return starcal.Prior(**kwargs)
 
 
@@ -157,7 +170,8 @@ def request_stack(paths: Paths, frames: int = STACK_FRAMES, every: int = STACK_E
 
 def run_job(paths: Optional[Paths] = None, force: bool = False, starcal: Any = None,
             fix_source: Callable[[], Optional[Dict[str, Any]]] = gpsd_fix, now_ns: Optional[int] = None,
-            stacker: Callable[..., Optional[Tuple[Any, Dict[str, Any]]]] = request_stack) -> Dict[str, Any]:
+            stacker: Callable[..., Optional[Tuple[Any, Dict[str, Any]]]] = request_stack,
+            clock_source: Callable[[], Optional[Dict[str, Any]]] = chrony_tracking) -> Dict[str, Any]:
     """One scheduler run; returns the attempt summary (also written to ``starcal-last.json`` when attempted)."""
     paths = paths or Paths.from_env()
     starcal = starcal if starcal is not None else load_starcal()
@@ -168,7 +182,8 @@ def run_job(paths: Optional[Paths] = None, force: bool = False, starcal: Any = N
     if fix is None and starcal is not None and node is not None:
         fix = fix_source()
     calib = load_calibration(paths.calibration)
-    d = decide(now, node, file_age_s(paths.node_json), fix, calib, starcal, force)
+    clock = clock_source() if starcal is not None and fix is not None else None
+    d = decide(now, node, file_age_s(paths.node_json), fix, calib, starcal, force, clock=clock)
     if not d.run:
         log.info("star calibration skipped: %s", d.reason)
         return {"attempted": False, "reason": d.reason}
