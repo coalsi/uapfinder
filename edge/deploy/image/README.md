@@ -84,7 +84,9 @@ again also restores everything.
 * **pps-gpio module.** `install-platform.sh` checks the L4T kernel's
   `modules.builtin` and module tree. If `pps-gpio` is neither built in nor a
   module but the PPS core is there, it builds `pps-gpio/pps-gpio.c`
-  (vendored unchanged from Linux 5.15.148) out of tree against
+  (vendored from Linux 5.15.148, one log line changed so it also builds on
+  later 5.15.y kernels where `struct pps_device` embeds its `struct device`)
+  out of tree against
   `/lib/modules/<kver>/build` (`nvidia-l4t-kernel-headers`) in the chroot
   and installs it to `/lib/modules/<kver>/updates/uapfinder/`. Without the
   PPS core it warns, and the node uses GPS serial / network time.
@@ -203,7 +205,7 @@ the first-boot reboot; the overlays on a real board (they are only checked
 with `fdtoverlay`); pps-gpio on pin 7 (and whether pin 7's pad needs more
 than the GPIO request to become an input); the IMX477 on CAM0 being CSI
 port A; the out-of-tree pps-gpio build against `nvidia-l4t-kernel-headers`
-(built locally only against Ubuntu's 5.15 arm64 headers); readsb with a
+(built locally only against Ubuntu's 5.15.0-198 arm64 headers); readsb with a
 real receiver.
 
 ## Sources

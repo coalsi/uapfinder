@@ -1,6 +1,9 @@
 /*
- * Vendored unchanged (apart from this comment block) from Linux v5.15.148,
- * drivers/pps/clients/pps-gpio.c:
+ * Vendored from Linux v5.15.148, drivers/pps/clients/pps-gpio.c, with one
+ * change: the "Registered IRQ" message is logged against the platform device
+ * (dev) instead of data->pps->dev, because later 5.15.y kernels (Ubuntu's
+ * 5.15.0-198, and possibly L4T's) embed struct device in struct pps_device
+ * (the PPS use-after-free fix), which breaks the original line. Source:
  *   https://raw.githubusercontent.com/gregkh/linux/v5.15.148/drivers/pps/clients/pps-gpio.c
  * Built out of tree by ../install-platform.sh only when the L4T R36 kernel
  * (5.15) has neither CONFIG_PPS_CLIENT_GPIO=y nor a pps-gpio module.
@@ -222,7 +225,7 @@ static int pps_gpio_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	dev_info(data->pps->dev, "Registered IRQ %d as PPS source\n",
+	dev_info(dev, "Registered IRQ %d as PPS source\n",
 		 data->irq);
 
 	return 0;
