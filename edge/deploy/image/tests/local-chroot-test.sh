@@ -96,7 +96,7 @@ step "pps-gpio module built for $KVER"
 ko="$ROOTFS/lib/modules/$KVER/updates/uapfinder/pps-gpio.ko"
 [[ -f "$ko" ]] || die "no $ko"
 file "$ko"
-modinfo "$ko" | grep -E '^(vermagic|alias|license):'
+chroot "$ROOTFS" /sbin/modinfo "${ko#"$ROOTFS"}" | grep -E '^(vermagic|alias|license):'
 
 step "test-image.sh on the root file system"
 "$IMAGE_DIR/test-image.sh" --rootfs "$ROOTFS" --local-test --expect-version "$VERSION" --expect-enroll-url "$URL"
