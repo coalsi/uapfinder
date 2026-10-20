@@ -14,12 +14,12 @@ NOW = time.time_ns()
 
 
 async def test_migrations_are_idempotent(database_url):
-    assert await migrate(database_url) == ["001_init", "002_volunteers"]
+    assert await migrate(database_url) == ["001_init", "002_volunteers", "003_enrollments"]
     assert await migrate(database_url) == []
     conn = await asyncpg.connect(database_url)
     try:
         tables = {r["tablename"] for r in await conn.fetch("SELECT tablename FROM pg_tables WHERE schemaname='public'")}
-        assert {"nodes", "tracks", "triangulations", "clips", "detections", "volunteers",
+        assert {"nodes", "tracks", "triangulations", "clips", "detections", "volunteers", "enrollment_codes",
                 "schema_migrations"} <= tables
         coltype = await conn.fetchval(
             "SELECT format_type(atttypid, atttypmod) FROM pg_attribute "

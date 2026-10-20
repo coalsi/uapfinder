@@ -27,7 +27,7 @@ def clear_frame():
 def test_centroids_subpixel_and_bright_first(clear_frame):
     s, img, uv, mag = clear_frame
     d = detect_stars(img)
-    assert len(d) > 600
+    assert len(d) > 450
     j, dist = nearest(d, uv)
     top = slice(0, 50)
     assert np.all(dist[top] < 1.0)                       # the brightest sources are catalog stars

@@ -88,12 +88,16 @@ if [[ "${SKYNET_SKIP_APT:-0}" != 1 ]]; then
     if [[ "${SKYNET_SKIP_TAILSCALE:-0}" != 1 ]] && ! command -v tailscale >/dev/null; then
         # Tailscale's documented manual install for Ubuntu 22.04 (jammy): signed apt repository.
         log "installing Tailscale from pkgs.tailscale.com"
-        curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg \
-            -o /usr/share/keyrings/tailscale-archive-keyring.gpg
-        curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list \
-            -o /etc/apt/sources.list.d/tailscale.list
-        apt-get update
-        apt-get install -y --no-install-recommends tailscale || warn "Tailscale install failed"
+        if curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg \
+                -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
+            && curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list \
+                -o /etc/apt/sources.list.d/tailscale.list \
+            && apt-get update; then
+            apt-get install -y --no-install-recommends tailscale || warn "Tailscale install failed"
+        else
+            rm -f /etc/apt/sources.list.d/tailscale.list
+            warn "could not reach pkgs.tailscale.com: Tailscale not installed (nodes then need a public server address)"
+        fi
     fi
 fi
 

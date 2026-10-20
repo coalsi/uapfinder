@@ -38,28 +38,77 @@ camera ──► capture thread ──► ring buffer (RAM, last N s, I420) ─�
 
 ## Install
 
-* **Fresh devkit:** follow [`deploy/image/README.md`](deploy/image/README.md)
-  (path A: NVIDIA's SD-card image written with Etcher, after the one-time
-  firmware update; path B: a custom image from the L4T BSP).
-* **Provisioning** (both paths end here): [`deploy/jetson/setup.sh`](deploy/jetson/setup.sh)
-  installs gpsd, chrony, pps-tools, ffmpeg and GStreamer tools, creates the
-  `skynet` system user, a venv with `--system-site-packages` (so the
-  JetPack OpenCV is used), the package, the gpsd/udev/chrony configuration
-  with PPS detection, the systemd unit and, optionally, joins Tailscale and
-  sets the power mode:
-  ```bash
-  sudo SKYNET_NODE_ID=node-a SKYNET_NODE_KEY=<64 hex> SKYNET_SERVER_HOST=mac-studio \
-       TS_AUTHKEY=tskey-auth-... SKYNET_NVPMODEL=<mode id> ./edge/deploy/jetson/setup.sh
-  ```
-  The node id and key come from the server (`POST /api/v1/nodes`, docs/API.md).
-  With Tailscale, create a tagged auth key (or list `tag:skynet-node` under
-  `tagOwners` in the tailnet policy) so nodes join as tagged devices.
-* **Development machine:**
-  ```bash
-  python3 -m venv edge/.venv
-  edge/.venv/bin/pip install -e common -e 'edge[test]'
-  edge/.venv/bin/pytest edge/tests
-  ```
+There are three ways, from least to most typing. All three produce the same
+system (docs/NODE_APPLIANCE.md is the design).
+
+1. **The UAP Finder image (recommended).** Write
+   `uapfinder-node-<version>-orin-nano.img.xz` from the project's GitHub
+   Releases to a microSD card with balenaEtcher, plug the parts together
+   (camera in CAM0, GPS on header pins 8/10 with PPS on pin 7), power on.
+   How the image is built: [`deploy/image/README.md`](deploy/image/README.md).
+2. **The setup page.** On a phone or laptop on the same network open
+   **http://uapfinder.local** (or `http://uapfinder-XXXX.local`). Without a
+   network the node opens the Wi-Fi hotspot **`UAPFinder-XXXX`** (password
+   `uapfinder`) after 90 s; join it and open **http://10.42.0.1**. The page
+   lets you join Wi-Fi, enter the **claim code** from your coordinator
+   (`XXXX-XXXX`, created with `skynet-server enroll-codes`), set a device
+   password, aim the camera with the live preview (elevation lines once the
+   pointing is known), and shows everything that was detected: camera, GPS
+   fix and satellites, PPS lock and chrony's time error, orientation sensor,
+   ADS-B source, storage, server connection and calibration. It also has
+   restart / shut-down buttons and a diagnostics download (secrets
+   redacted). After the password is set, every change needs it; the status
+   stays readable on the local network.
+3. **Command-line installer** on a Jetson that already runs JetPack 6:
+   ```bash
+   sudo UAPF_ENROLL_URL=https://server.example.org ./edge/deploy/install-node.sh
+   # or, the older entry point (also accepts an existing node id/key):
+   sudo SKYNET_NODE_ID=node-a SKYNET_NODE_KEY=<64 hex> SKYNET_SERVER_HOST=mac-studio \
+        TS_AUTHKEY=tskey-auth-... ./edge/deploy/jetson/setup.sh
+   ```
+   [`deploy/install-node.sh`](deploy/install-node.sh) is idempotent and
+   non-interactive: packages (gpsd, chrony, NetworkManager, avahi,
+   Tailscale, ffmpeg, GStreamer tools, growpart...), the `skynet` user, the
+   venv at `/opt/skynet/venv` with `--system-site-packages` (JetPack's
+   OpenCV), the gpsd/udev/chrony/polkit/tmpfiles configuration, and all the
+   units below, enabled. `--chroot` is the image build's mode (only enables
+   units, touches no running service). An existing system keeps its host
+   name and SSH keys. A hand-written `/etc/skynet/edge.yaml` from an older
+   install is moved to `edge.local.yaml`, so it keeps overriding everything.
+
+What runs on the node:
+
+| Unit | User | What |
+|------|------|------|
+| `uapfinder-firstboot.service` | root | Once: grow the root file system (`growpart` + `resize2fs`; a no-op if NVIDIA's first-boot resize already ran), host name `uapfinder-XXXX`, new SSH host keys. Every boot: a **blank** NVMe drive (no partition table, no signature, unused) is formatted and mounted at `/var/lib/skynet`; a drive with data is never touched. |
+| `uapfinder-netsetup.service` | root | Hotspot after 90 s offline (`nmcli device wifi hotspot`), taken down once connected; publishes `uapfinder.local` (`avahi-publish -a -R`). |
+| `uapfinder-setup.service` | skynet | The setup page on port 80 (`CAP_NET_BIND_SERVICE` only, `NoNewPrivileges`). |
+| `uapfinder-admin.path` / `.service` | root | Carries out the page's queued restart / reboot / shut-down / login-password requests. |
+| `skynet-edge.service` | skynet | `tailscale-join` and `autoconfig --system` (root pre-steps), then the node; waits quietly until enrolled. |
+| `uapfinder-starcal.timer` / `.service` | skynet | Star calibration every 30 min when dark, with a fix, and due. |
+
+`skynet-edge autoconfig` writes `/etc/skynet/edge.yaml` at every start from
+the detected hardware (`skynet-edge detect`), `/var/lib/skynet/credentials.json`,
+`/var/lib/skynet/calibration.json` and `/etc/skynet/defaults.yaml`; put hand
+edits in `/etc/skynet/edge.local.yaml`. Until the stars give a pointing
+solution, the node reports with the "pointing up" prior (or the BNO055) and
+says so in its heartbeat (`status.pointing`, `status.pointing_sigma_deg`).
+
+ADS-B without a local receiver: the default online feed is
+[adsb.lol](https://adsb.lol) (`https://api.adsb.lol/v2/point/{lat}/{lon}/{dist}`,
+ADSBx-v2-compatible, ODbL data, dynamic rate limits, an API key "in the
+future" for feeders). The node polls it every 5 s for 40 nm around itself,
+sending its position rounded to 0.01° (~1 km), identifies itself with a
+User-Agent and backs off on HTTP 429. `https://api.airplanes.live/v2/point/{lat}/{lon}/{dist}`
+also works (1 request/s, non-commercial use). Set `adsb_online: false` in
+`edge.local.yaml` to send nothing; plug in an RTL-SDR to use local readsb.
+
+**Development machine:**
+```bash
+python3 -m venv edge/.venv
+edge/.venv/bin/pip install -e common -e 'edge[test]'
+edge/.venv/bin/pytest edge/tests
+```
 
 ### Deploying against a Mac Studio over Tailscale
 
@@ -82,8 +131,9 @@ server:
 ## Configuration
 
 [`config/example.yaml`](config/example.yaml) documents every section. The
-loader rejects unknown keys and out-of-range values at start-up. The parts
-you must set per node:
+loader rejects unknown keys and out-of-range values at start-up. On the
+appliance `autoconfig` fills all of this in; on a hand-configured node (or in
+`edge.local.yaml`) the parts you set per node are:
 
 * `node.node_id`, `node.key_file`
 * `server.*` (above)
@@ -96,7 +146,7 @@ you must set per node:
   the first fix.
 * `detection.sky_mask`: minimum elevation and/or a pixel polygon
 * `adsb.*`: a local readsb/dump1090 `aircraft.json`, or an ADSBx-v2-style
-  API (`https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{dist}`, ADS-B
+  API (`https://api.adsb.lol/v2/point/{lat}/{lon}/{dist}`, ADS-B
   Exchange with `api_key`)
 
 Reporting policy (`anomaly.*`): by default **every confirmed track that no
@@ -112,6 +162,11 @@ only tracks whose peak score reaches `min_anomaly_score`.
 | `skynet-edge run --config /etc/skynet/edge.yaml` | The node (what the systemd unit runs). |
 | `skynet-edge bench` | Synthetic 1920x1080@60 through the full pipeline; prints sustained FPS, per-stage ms, peak memory and PASS/FAIL against ≥60 FPS and <7 GB. `--unpaced` measures maximum throughput, `--config` uses a node's detection settings. Exit code 2 on FAIL. |
 | `skynet-edge replay video.mp4 --config cfg.yaml [--out tel.ndjson] [--send]` | Runs a recorded video through the pipeline and prints what would be reported (or sends it). |
+| `skynet-edge detect` | JSON of the attached hardware (camera, GPS, PPS, BNO055, RTL-SDR, NVMe, network); every probe has a timeout, < 10 s in total. |
+| `skynet-edge autoconfig [--dry-run] [--system]` | Writes `/etc/skynet/edge.yaml` (see Install); `--system` (root) also updates chrony's PPS refclock. |
+| `skynet-edge setup-server [--port 80]` | The setup page. |
+| `skynet-edge starcal [--force]` | One star-calibration attempt if due. |
+| `skynet-edge netsetup`, `tailscale-join`, `admin-requests` | Root helpers run by their units. |
 | `skynet-edge make-synthetic sky.mp4 [--config cfg.yaml]` | Renders the synthetic test sky (a turning target, a cloud, a bird, an aircraft) with ground truth, a matching `aircraft.json` and a replay config. |
 
 `journalctl -u skynet-edge -f` shows a status line every minute; the
@@ -300,8 +355,35 @@ NMEA from a real serial port, PPS and chrony discipline, the BNO055 driver
 (tested against a fake SMBus), thermal zones and memory on Jetson, sd_notify
 under systemd, `setup.sh`, `customize_rootfs.sh` and flashing, Tailscale
 join, nvpmodel modes, and the systemd hardening options with real devices.
+Appliance parts: hardware detection on real sysfs (tested on fake trees, a
+pty and a fake gpsd), the hotspot and NetworkManager/polkit grants, avahi
+alias publishing, growpart/resize2fs and NVMe formatting in
+`uapfinder-firstboot`, the admin spool under systemd, and the setup page on
+a phone over the hotspot. `install-node.sh` was run in an Ubuntu 22.04
+container (no systemd, no Jetson packages), not on a Jetson.
 
 ## Research notes and sources
+
+* `tailscale up --auth-key=file:<path>` reads the key from a file (CLI source,
+  `cmd/tailscale/cli/up.go`): https://github.com/tailscale/tailscale/blob/main/cmd/tailscale/cli/up.go ;
+  flags: https://tailscale.com/kb/1241/tailscale-up
+* growpart returns 0 (changed), 1 (NOCHANGE), 2 (error), takes a `flock` on the
+  disk and moves the backup GPT header (`sgdisk --move-second-header`):
+  https://github.com/canonical/cloud-utils/blob/main/bin/growpart . NVIDIA's
+  first-boot resize (`nvresizefs`) grows the APP partition once:
+  https://forums.developer.nvidia.com/t/nano-nvresizefs-on-line-resizing-required/77997
+* `nmcli device wifi hotspot ifname .. con-name .. ssid .. password ..` and
+  `device wifi connect <ssid> password <psk> ifname ..` argument parsing:
+  https://github.com/NetworkManager/NetworkManager/blob/main/src/nmcli/devices.c
+* `avahi-publish -a -R <name> <address>` (`-R`: no reverse PTR):
+  https://github.com/avahi/avahi/blob/master/avahi-utils/avahi-publish.c
+* Ubuntu 22.04 ships polkit 0.105 (`.pkla` local authority files, no JavaScript
+  rules), checked with `apt-cache policy policykit-1` in an ubuntu:22.04
+  container; both a `.pkla` and a `.rules` file are installed.
+* adsb.lol: ADSBx-compatible API, dynamic rate limits, `/v2/point/{lat}/{lon}/{radius}`:
+  https://github.com/adsblol/api , https://pypi.org/project/skysnoop/ ;
+  airplanes.live: 1 request/s, non-commercial, point radius up to 250 nm:
+  https://airplanes.live/api-guide
 
 * Orin Nano has no NVENC; software encoding with libx264 is NVIDIA's
   documented path: https://docs.nvidia.com/jetson/archives/r36.3/DeveloperGuide/SD/Multimedia/SoftwareEncodeInOrinNano.html

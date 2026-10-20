@@ -138,7 +138,7 @@
     list.appendChild(item("Aircraft (ADS-B)", adsbText, cfg.adsb_source && cfg.adsb_source !== "none" ? "ok" : "warn"));
 
     const st = s.storage || {};
-    list.appendChild(item("Storage", (st.nvme ? "NVMe SSD" : "microSD card") + (st.free_gb !== undefined ? ", " + st.free_gb + " GB free of " + st.total_gb : ""),
+    list.appendChild(item("Storage", (st.nvme ? "NVMe SSD" : "microSD card") + (st.free_gb !== undefined ? ", " + st.free_gb + " GB free of " + st.total_gb + " GB" : ""),
       st.free_gb !== undefined && st.free_gb < 2 ? "err" : st.nvme ? "ok" : "warn"));
 
     const srv = s.server || {};

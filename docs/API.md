@@ -266,6 +266,62 @@ volunteers are omitted so individuals cannot be located.
 
 `DELETE /api/v1/volunteers/{id}` (admin) → `204`, for removal requests.
 
+### Node enrollment (claim codes)
+How an appliance node gets its identity without anyone copying keys
+(docs/NODE_APPLIANCE.md). Needs the database (migration
+`003_enrollments.sql`): every endpoint answers `503` without one, and
+`/enroll` also without `SKYNET_MASTER_KEY`.
+
+`POST /api/v1/enrollments` (admin; refused with `403` through Tailscale Funnel
+like every admin endpoint)
+```json
+{"count": 5, "label": "Phoenix pilot", "expires_in_h": 720}
+```
+`count` 1–200 (default 1), `label` ≤ 200 chars (optional), `expires_in_h`
+default 720 (30 days). → `201 {"codes": [{"code": "7KQ2-M9XD", "expires_ns": 1795…}]}`.
+Codes are 8 characters of Crockford base32 (no I, L, O, U; 40 random bits).
+The same from the command line: `skynet-server enroll-codes --count 5 --label
+"Phoenix pilot"` (writes to `SKYNET_DATABASE_URL`, or with `--server URL`
+calls this endpoint with `SKYNET_ADMIN_TOKEN`).
+
+`GET /api/v1/enrollments` (admin) → `{"codes": [{"code", "label", "created_ns",
+"expires_ns", "used_ns", "node_id", "hardware"}]}`: which node each code produced.
+
+`POST /api/v1/enroll` (public; rate-limited to `SKYNET_ENROLL_RATE_PER_HOUR`
+requests per hour per client address, default 10)
+```json
+{"code": "7kq2m9xd", "hardware": {"serial": "…", "model": "Jetson Orin Nano", "camera": "imx477",
+ "gps": "pps", "software_version": "0.2.0", "extras": ["bno055"]}}
+```
+The code is case-insensitive and ignores dashes and spaces (O reads as 0,
+I and L as 1). `hardware` is optional, unknown members are ignored, and it is
+stored with the code. → `201`:
+```json
+{"node_id": "<uuid4>", "node_key": "<64 hex>", "transport": "udp", "udp_host": "mac-studio",
+ "udp_port": 9999, "https_base_url": "http://mac-studio:8000",
+ "tailscale": {"auth_key": "tskey-auth-…", "tags": ["tag:skynet-node"]}}
+```
+The node is registered (as with `POST /api/v1/nodes`, labelled with the
+code's label and the serial number) and the code is marked used, atomically:
+of concurrent requests with one code exactly one succeeds. Errors: `404`
+unknown or malformed code, `410` code already used or expired, `422` bad
+body, `429` rate limited.
+
+Where the answer comes from:
+
+| Field | Setting | Default |
+|-------|---------|---------|
+| `transport` | `SKYNET_NODE_TRANSPORT` (`udp`/`https`) | `udp` if this server runs the UDP listener, else `https` |
+| `udp_host` | `SKYNET_NODE_UDP_HOST` | host of `SKYNET_UDP_PUBLIC_ENDPOINT`, else host of `SKYNET_PUBLIC_URL`, else the host the request was sent to |
+| `udp_port` | `SKYNET_NODE_UDP_PORT` | port of `SKYNET_UDP_PUBLIC_ENDPOINT`, else `SKYNET_UDP_PORT` (9999) |
+| `https_base_url` | `SKYNET_PUBLIC_URL` | the request's base URL |
+| `tailscale` | `SKYNET_TAILSCALE_AUTHKEY`, `SKYNET_TAILSCALE_TAGS` (default `tag:skynet-node`) | `null` without a key |
+
+The Tailscale key should be a reusable, pre-authorised, tagged auth key
+(the tags must be in the tailnet policy's `tagOwners`); it is handed to every
+enrolling node, so rotate it if a code list leaks. The node deletes it from
+its disk after joining.
+
 ### `GET /metrics` (alias `GET /api/v1/metrics`)
 Prometheus text exposition of the counters behind `/stats`. The alias is
 reachable on Vercel, where only `/api/*` is routed to the function.

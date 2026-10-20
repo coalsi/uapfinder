@@ -116,7 +116,7 @@ def test_enroll_flow(client: TestClient):
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["node_key"] == derive_node_key(MASTER_KEY, body["node_id"]).hex()
-    assert body["transport"] == "https" or body["transport"] == "udp"
+    assert body["transport"] == "https"  # this test server runs without the UDP listener
     assert body["udp_host"] == "mac-studio" and body["udp_port"] == 9999
     assert body["https_base_url"] == "http://mac-studio:8000"
     assert body["tailscale"] == {"auth_key": "tskey-auth-k123-xyz", "tags": ["tag:skynet-node"]}

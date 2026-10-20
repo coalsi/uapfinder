@@ -65,6 +65,7 @@ root, and all are enabled in the image and by the command-line installer.
 | `skynet-edge.service` | The detection pipeline (existing). Waits, without failing, until the node is enrolled. |
 | `uapfinder-starcal.timer` / `.service` | Automatic pointing calibration from the stars (below). |
 | `readsb.service` | Local ADS-B decoding, started only when a receiver is present. |
+| `uapfinder-admin.path` / `.service` | Root helper for the setup page: restart, reboot, shut down and the login password are queued as files in `/run/skynet/admin/` and carried out by this one-shot unit (no sudo rights for the page). |
 
 `skynet-edge autoconfig` (run by the services at boot) detects the hardware,
 combines it with the enrollment credentials and the latest calibration, and
@@ -73,6 +74,21 @@ writes `/etc/skynet/edge.yaml`. Hand edits go in
 
 State lives in `/var/lib/skynet/`: `credentials.json` (0600: node id, key,
 server addresses), `calibration.json` (pointing and lens), `clips/`.
+The services share `/run/skynet/` (tmpfs, owner `skynet`): `detect.json` and
+`autoconfig.json` (written at each node start), `node.json` (the running
+node's status for the setup page), `preview.jpg` (written about once a second
+while the page touches `preview.request`), `stack.request` → `stack.npy` +
+`stack.json` (frame stacks for star calibration) and `admin/`. Only
+`skynet-edge run` opens the camera, also before enrollment, when only the
+preview is served. `skynet-edge.service` joins the tailnet
+(`skynet-edge tailscale-join`, enabling `tailscaled` the first time) and runs
+`skynet-edge autoconfig --system` (which also points chrony at the detected PPS
+device) as root `ExecStartPre` steps; the node exits and is restarted when
+`credentials.json` or `calibration.json` change.
+
+`calibration.json`: `{"version": 1, "ok": true, "source": "starcal", "t_ns",
+"width", "height", "yaw_deg", "pitch_deg", "roll_deg", "fx", "fy", "cx", "cy",
+"k1", "k2", "stars_matched", "rms_deg"}`.
 
 Image defaults, written when the image is built, live in
 `/etc/skynet/defaults.yaml`; most importantly `enroll_url`, the server the
@@ -147,7 +163,10 @@ node calibrates itself:
   more than 7 days old. Clouds or a failed solve just mean it tries again
   later.
 * Until the first calibration the node reports with its prior and a large
-  angular uncertainty; the server's gate accepts only consistent matches,
+  angular uncertainty (heartbeat `status.pointing` = `prior` | `imu` |
+  `starcal` and `status.pointing_sigma_deg`: 45° for the prior, 10° with an
+  orientation sensor, the solve's RMS after calibration; the wire protocol has
+  no per-message uncertainty field, so it travels in the free-form status); the server's gate accepts only consistent matches,
   so an uncalibrated node rarely produces false fixes. The status page shows
   "Pointing: waiting for a clear night" until then.
 

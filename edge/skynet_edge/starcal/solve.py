@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -159,6 +159,8 @@ class SolveParams:
     coarse_detections: int = 40
     coarse_res_deg: float = 0.2
     coarse_candidates: int = 4
+    coarse_budget: float = 1.5e8      # max lookups in one coarse pass (detections x yaws x combos)
+    wide_candidates: int = 10        # first-pass hypotheses re-searched finely for wide/unknown priors
     max_detections: int = 1000
     final_radius_px: float = 3.0
     fit_k2_min_stars: int = 80
@@ -251,7 +253,8 @@ class _Fit:
 # --- coarse search ---------------------------------------------------------
 
 def _coarse_search(det: Detections, cat_az, cat_el, cat_mag, prior: Prior, intr0: Intrinsics,
-                   sp: SolveParams, fit_intr: bool) -> Tuple[List[_Candidate], dict]:
+                   sp: SolveParams, fit_intr: bool, step: float = 1.0,
+                   n_cands: Optional[int] = None) -> Tuple[List[_Candidate], dict]:
     W, H = prior.width, prior.height
     n_c = min(sp.coarse_detections, len(det))
     uv = det.uv[:n_c]
@@ -275,8 +278,7 @@ def _coarse_search(det: Detections, cat_az, cat_el, cat_mag, prior: Prior, intr0
     random_score = float(frac[zone].sum())
 
     # search grids
-    step = 1.0  # pitch/roll grid step around a prior
-
+    # ``step``: pitch/roll grid step around a prior
     def angle_grid(which, full_lo, full_hi, full_step):
         v = getattr(prior, which + "_deg")
         if v is None:
@@ -314,13 +316,15 @@ def _coarse_search(det: Detections, cat_az, cat_el, cat_mag, prior: Prior, intr0
 
     n_combo = len(pitches) * len(rolls) * len(fscale) * len(k1s)
     # keep the work bounded (the fully-unknown case): thin f/k1 first
-    budget = 4.0e8
+    budget = sp.coarse_budget
+    thinned = False
     while n_combo * n_c * len(shifts) > budget and (len(fscale) > 1 or len(k1s) > 1):
         if len(k1s) >= len(fscale):
             k1s = k1s[::2]
         else:
             fscale = fscale[len(fscale) // 2::max(1, len(fscale))] if len(fscale) <= 2 else fscale[::2]
         n_combo = len(pitches) * len(rolls) * len(fscale) * len(k1s)
+        thinned = True
 
     best: List[Tuple[float, float, float, float, float, float]] = []
     # Flat lookup table: per zone, n_el rows + one all-false row (below the
@@ -367,9 +371,9 @@ def _coarse_search(det: Detections, cat_az, cat_el, cat_mag, prior: Prior, intr0
             continue
         intr = intr0.with_(fx=intr0.fx * fs, fy=intr0.fy * fs, k1=k1, k2=intr0.k2 if not fit_intr else 0.0)
         cands.append(_Candidate(sc, M, intr))
-        if len(cands) >= sp.coarse_candidates:
+        if len(cands) >= (n_cands or sp.coarse_candidates):
             break
-    info = {"coarse_best": cands[0].score if cands else 0, "coarse_second": cands[1].score if len(cands) > 1 else 0,
+    info = {"coarse_wide": bool(thinned or pitch_unknown or roll_unknown or len(pitches) * len(rolls) > 400),"coarse_best": cands[0].score if cands else 0, "coarse_second": cands[1].score if len(cands) > 1 else 0,
             "coarse_random": round(random_score, 2), "coarse_used": n_c, "coarse_combos": n_combo,
             "coarse_yaws": int(len(shifts))}
     return cands, info
@@ -666,6 +670,24 @@ def calibrate(image: np.ndarray, t_ns: int, observer: Observer, prior: Prior,
     cat_blend = _blended(cat_enu, cat_mag, 3.0 * deg_px)
 
     cands, info = _coarse_search(det, cat_az, cat_el, cat_mag, prior, intr_nom, sp, fit_intr)
+    if info["coarse_wide"] and cands:
+        # Wide or unknown prior: the first grid was coarse (or thinned in focal
+        # length/k1). Re-search finely around each of its best hypotheses.
+        cands0, cands = _coarse_search(det, cat_az, cat_el, cat_mag, prior, intr_nom, sp, fit_intr,
+                                       n_cands=sp.wide_candidates)[0], []
+        for c in cands0:
+            y, p, r = matrix_to_attitude(c.M)
+            local = replace(prior, yaw_deg=y, pitch_deg=min(p, 90.0), roll_deg=r, sigma_deg=0.8, yaw_sigma_deg=None,
+                            pitch_sigma_deg=None, roll_sigma_deg=None)
+            cands += _coarse_search(det, cat_az, cat_el, cat_mag, local, intr_nom, sp, fit_intr, step=0.5,
+                                    n_cands=2)[0]
+        cands.sort(key=lambda c: -c.score)
+        uniq: List[_Candidate] = []
+        for c in cands:
+            if all(math.degrees(math.acos(min(1.0, (np.trace(u.M @ c.M.T) - 1) / 2))) >= 3.0 for u in uniq):
+                uniq.append(c)
+        cands = uniq[:sp.coarse_candidates]
+        info["coarse_best"] = cands[0].score if cands else 0
     checks = dict(info)
     # The coarse score only ranks hypotheses; the strict checks come after refinement.
     if not cands or cands[0].score < max(8.0, info["coarse_random"] + 6.0):
